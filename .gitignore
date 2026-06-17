@@ -1,0 +1,25 @@
+# Unreal Engine generated folders
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio
+.vs/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.user
+
+# Build artifacts
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+
+# Keep these (do NOT ignore):
+# Config/, Content/, Source/, *.uproject, Plugins/<your plugins>/Source
