@@ -1,12 +1,20 @@
 // DwmGameInstance.cpp
 // Handles dwmworld:// launch URLs and loads DWM world packages from SQLite.
+// Actors are spawned in OnStart() (deferred) because GetWorld() is null
+// during Init() before the first level has loaded.
 
 #include "DwmGameInstance.h"
 #include "DwmWorldPackageTypes.h"
+#include "DwmPendulumActor.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "SQLiteDatabase.h"
+
+// ---------------------------------------------------------------------------
+// Init — runs at game startup (before level loads). Read the package here;
+// defer spawning to OnStart().
+// ---------------------------------------------------------------------------
 
 void UDwmGameInstance::Init()
 {
@@ -20,24 +28,37 @@ void UDwmGameInstance::Init()
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("[DWM] No dwmworld:// launch URL on command line."));
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] No dwmworld:// launch URL — will spawn on Play."));
+
+        // For PIE testing without a real launch URL, load the pendulum
+        // package directly so hitting Play always shows the pendulum.
+        LoadDwmWorld(TEXT("pendulum"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// OnStart — fires after the first level has loaded. GetWorld() is valid here.
+// ---------------------------------------------------------------------------
+
+void UDwmGameInstance::OnStart()
+{
+    Super::OnStart();
+    SpawnWorldActors();
+}
+
+// ---------------------------------------------------------------------------
+// URL parsing
+// ---------------------------------------------------------------------------
 
 bool UDwmGameInstance::TryGetLaunchUrl(FString& OutUrl) const
 {
     const FString FullCmdLine = FCommandLine::Get();
-
     const int32 SchemeIdx = FullCmdLine.Find(
-        TEXT("dwmworld://"),
-        ESearchCase::IgnoreCase,
-        ESearchDir::FromStart);
-
-    if (SchemeIdx == INDEX_NONE)
-        return false;
+        TEXT("dwmworld://"), ESearchCase::IgnoreCase, ESearchDir::FromStart);
+    if (SchemeIdx == INDEX_NONE) return false;
 
     FString Tail = FullCmdLine.RightChop(SchemeIdx);
-
     int32 SpaceIdx;
     if (Tail.FindChar(TEXT(' '), SpaceIdx))
         Tail = Tail.Left(SpaceIdx);
@@ -49,22 +70,15 @@ bool UDwmGameInstance::TryGetLaunchUrl(FString& OutUrl) const
 
 void UDwmGameInstance::HandleDwmUrl(const FString& Url)
 {
-    const FString SchemePrefix = TEXT("dwmworld://");
-    if (!Url.StartsWith(SchemePrefix, ESearchCase::IgnoreCase))
+    const FString Prefix = TEXT("dwmworld://");
+    if (!Url.StartsWith(Prefix, ESearchCase::IgnoreCase))
     {
         UE_LOG(LogTemp, Warning, TEXT("[DWM] Not a dwmworld:// link: %s"), *Url);
         return;
     }
 
-    const FString WithoutScheme = Url.RightChop(SchemePrefix.Len());
-
-    FString PathPart;
-    FString QueryPart;
-    if (!WithoutScheme.Split(TEXT("?"), &PathPart, &QueryPart))
-    {
-        PathPart = WithoutScheme;
-        QueryPart = TEXT("");
-    }
+    FString PathPart, QueryPart;
+    Url.RightChop(Prefix.Len()).Split(TEXT("?"), &PathPart, &QueryPart);
 
     TMap<FString, FString> Params;
     TArray<FString> Pairs;
@@ -83,10 +97,10 @@ void UDwmGameInstance::HandleDwmUrl(const FString& Url)
             WorldId.Contains(TEXT("/")) || WorldId.Contains(TEXT("\\")) ||
             WorldId.Contains(TEXT("..")))
         {
-            UE_LOG(LogTemp, Warning, TEXT("[DWM] Rejected suspicious world id: %s"), *WorldId);
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM] Rejected suspicious world id: %s"), *WorldId);
             return;
         }
-
         PendingWorldId = WorldId;
         UE_LOG(LogTemp, Log, TEXT("[DWM] Parsed world id: %s"), *WorldId);
         LoadDwmWorld(WorldId);
@@ -97,154 +111,209 @@ void UDwmGameInstance::HandleDwmUrl(const FString& Url)
     }
 }
 
+// ---------------------------------------------------------------------------
+// LoadDwmWorld — reads the SQLite package and stores data for deferred spawn.
+// ---------------------------------------------------------------------------
+
 void UDwmGameInstance::LoadDwmWorld(const FString& WorldId)
 {
-    // Build the expected package path.
-    // Convention: C:\DreamWorldMaker\Packages\DWM_WorldPackage_<id>.db
     const FString PackagePath = FString::Printf(
         TEXT("C:/DreamWorldMaker/Packages/DWM_WorldPackage_%s.db"), *WorldId);
 
     UE_LOG(LogTemp, Log, TEXT("[DWM] Loading world package: %s"), *PackagePath);
 
-    // Open the SQLite database.
     FSQLiteDatabase Db;
     if (!Db.Open(*PackagePath, ESQLiteDatabaseOpenMode::ReadOnly))
     {
         UE_LOG(LogTemp, Error,
-            TEXT("[DWM] Failed to open world package at: %s"), *PackagePath);
+            TEXT("[DWM] Failed to open world package: %s"), *PackagePath);
         return;
     }
 
-    // ------------------------------------------------------------------
-    // Read WorldInfo
-    // ------------------------------------------------------------------
+    // WorldInfo
     {
         FSQLitePreparedStatement Stmt;
-        Stmt.Create(Db, TEXT("SELECT WorldId, Name, Description, SchemaVersion FROM WorldInfo LIMIT 1;"),
+        Stmt.Create(Db,
+            TEXT("SELECT WorldId, Name, Description, SchemaVersion FROM WorldInfo LIMIT 1;"),
             ESQLitePreparedStatementFlags::Persistent);
-
         if (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
         {
-            FString Id, Name, Desc;
-            int64 Version = 0;
+            FString Id, Name, Desc; int64 Ver = 0;
             Stmt.GetColumnValueByIndex(0, Id);
             Stmt.GetColumnValueByIndex(1, Name);
             Stmt.GetColumnValueByIndex(2, Desc);
-            Stmt.GetColumnValueByIndex(3, Version);
+            Stmt.GetColumnValueByIndex(3, Ver);
             UE_LOG(LogTemp, Log,
                 TEXT("[DWM] WorldInfo: id=%s name='%s' schema_v=%lld"),
-                *Id, *Name, Version);
+                *Id, *Name, Ver);
         }
         Stmt.Destroy();
     }
 
-    // ------------------------------------------------------------------
-    // Read Blocks
-    // ------------------------------------------------------------------
+    // Blocks
     TArray<FDwmBlock> Blocks;
     {
         FSQLitePreparedStatement Stmt;
-        Stmt.Create(Db, TEXT("SELECT BlockId, Name, BlockType FROM Blocks;"),
+        Stmt.Create(Db,
+            TEXT("SELECT BlockId, Name, BlockType FROM Blocks;"),
             ESQLitePreparedStatementFlags::Persistent);
-
         while (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
         {
-            FDwmBlock Block;
-            Stmt.GetColumnValueByIndex(0, Block.BlockId);
-            Stmt.GetColumnValueByIndex(1, Block.Name);
-            Stmt.GetColumnValueByIndex(2, Block.BlockType);
-            Blocks.Add(Block);
+            FDwmBlock B;
+            Stmt.GetColumnValueByIndex(0, B.BlockId);
+            Stmt.GetColumnValueByIndex(1, B.Name);
+            Stmt.GetColumnValueByIndex(2, B.BlockType);
+            Blocks.Add(B);
             UE_LOG(LogTemp, Log,
-                TEXT("[DWM] Block: id=%s name='%s' type=%s"),
-                *Block.BlockId, *Block.Name, *Block.BlockType);
+                TEXT("[DWM] Block: %s (%s)"), *B.Name, *B.BlockType);
         }
         Stmt.Destroy();
     }
 
-    // ------------------------------------------------------------------
-    // Read Parameters
-    // ------------------------------------------------------------------
+    // Parameters (logged only — physics consumed on C# side)
     {
         FSQLitePreparedStatement Stmt;
-        Stmt.Create(Db, TEXT("SELECT BlockId, Name, Value, Unit FROM Parameters;"),
+        Stmt.Create(Db,
+            TEXT("SELECT BlockId, Name, Value, Unit FROM Parameters;"),
             ESQLitePreparedStatementFlags::Persistent);
-
         while (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
         {
-            FString BlockId, Name, Unit;
-            double Value = 0.0;
-            Stmt.GetColumnValueByIndex(0, BlockId);
+            FString BId, Name, Unit; double Val = 0.0;
+            Stmt.GetColumnValueByIndex(0, BId);
             Stmt.GetColumnValueByIndex(1, Name);
-            Stmt.GetColumnValueByIndex(2, Value);
+            Stmt.GetColumnValueByIndex(2, Val);
             Stmt.GetColumnValueByIndex(3, Unit);
             UE_LOG(LogTemp, Log,
-                TEXT("[DWM] Param: block=%s %s=%.4f %s"),
-                *BlockId, *Name, Value, *Unit);
+                TEXT("[DWM] Param: %s = %.4f %s"), *Name, Val, *Unit);
         }
         Stmt.Destroy();
     }
 
-    // ------------------------------------------------------------------
-    // Read AssetBindings
-    // ------------------------------------------------------------------
-    TArray<FDwmAssetBinding> Bindings;
+    // Asset bindings
+    TMap<FString, FDwmAssetBinding> BindingsByBlock;
     {
         FSQLitePreparedStatement Stmt;
         Stmt.Create(Db,
             TEXT("SELECT BlockId, AssetPath, AssetType, Role FROM AssetBindings;"),
             ESQLitePreparedStatementFlags::Persistent);
-
         while (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
         {
-            FDwmAssetBinding Binding;
-            Stmt.GetColumnValueByIndex(0, Binding.BlockId);
-            Stmt.GetColumnValueByIndex(1, Binding.AssetPath);
-            Stmt.GetColumnValueByIndex(2, Binding.AssetType);
-            Stmt.GetColumnValueByIndex(3, Binding.Role);
-            Bindings.Add(Binding);
+            FDwmAssetBinding Ab;
+            Stmt.GetColumnValueByIndex(0, Ab.BlockId);
+            Stmt.GetColumnValueByIndex(1, Ab.AssetPath);
+            Stmt.GetColumnValueByIndex(2, Ab.AssetType);
+            Stmt.GetColumnValueByIndex(3, Ab.Role);
+            BindingsByBlock.Add(Ab.BlockId, Ab);
             UE_LOG(LogTemp, Log,
-                TEXT("[DWM] Asset: block=%s path=%s role=%s"),
-                *Binding.BlockId, *Binding.AssetPath, *Binding.Role);
+                TEXT("[DWM] Binding: %s -> %s"), *Ab.BlockId, *Ab.AssetPath);
         }
         Stmt.Destroy();
     }
 
-    // ------------------------------------------------------------------
-    // Read SimSamples (log first 3 only to keep log readable)
-    // ------------------------------------------------------------------
+    // Sim samples
+    TMap<FString, TArray<FDwmSimSample>> SamplesByBlock;
     {
         FSQLitePreparedStatement Stmt;
         Stmt.Create(Db,
-            TEXT("SELECT BlockId, Time, Position, Velocity FROM SimSamples ORDER BY Time ASC;"),
+            TEXT("SELECT BlockId, Time, Position, Velocity "
+                "FROM SimSamples ORDER BY BlockId, Time ASC;"),
             ESQLitePreparedStatementFlags::Persistent);
-
-        int32 SampleCount = 0;
         while (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
         {
-            if (SampleCount < 3)
-            {
-                FString BlockId;
-                double Time = 0.0, Position = 0.0, Velocity = 0.0;
-                Stmt.GetColumnValueByIndex(0, BlockId);
-                Stmt.GetColumnValueByIndex(1, Time);
-                Stmt.GetColumnValueByIndex(2, Position);
-                Stmt.GetColumnValueByIndex(3, Velocity);
-                UE_LOG(LogTemp, Log,
-                    TEXT("[DWM] Sample[%d]: t=%.3f pos=%.4f vel=%.4f"),
-                    SampleCount, Time, Position, Velocity);
-            }
-            SampleCount++;
+            FDwmSimSample S;
+            Stmt.GetColumnValueByIndex(0, S.BlockId);
+            Stmt.GetColumnValueByIndex(1, S.Time);
+            Stmt.GetColumnValueByIndex(2, S.Position);
+            Stmt.GetColumnValueByIndex(3, S.Velocity);
+            SamplesByBlock.FindOrAdd(S.BlockId).Add(S);
         }
-        UE_LOG(LogTemp, Log, TEXT("[DWM] Total sim samples: %d"), SampleCount);
+        UE_LOG(LogTemp, Log, TEXT("[DWM] Sim samples loaded."));
         Stmt.Destroy();
     }
 
     Db.Close();
 
-    UE_LOG(LogTemp, Log,
-        TEXT("[DWM] World package loaded. Blocks=%d Bindings=%d — spawn step next."),
-        Blocks.Num(), Bindings.Num());
+    // Store for deferred spawn in OnStart()
+    PendingBlocks = Blocks;
+    PendingBindings = BindingsByBlock;
+    PendingSamples = SamplesByBlock;
+    bHasPendingSpawn = true;
 
-    // Next Phase 3 task: spawn an actor per block, load the bound mesh,
-    // and drive it from the SimSamples each tick.
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] Package read complete. %d block(s) queued for spawn in OnStart()."),
+        Blocks.Num());
+}
+
+// ---------------------------------------------------------------------------
+// SpawnWorldActors — called from OnStart() when the world is ready.
+// ---------------------------------------------------------------------------
+
+void UDwmGameInstance::SpawnWorldActors()
+{
+    if (!bHasPendingSpawn)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[DWM] SpawnWorldActors: nothing pending."));
+        return;
+    }
+    bHasPendingSpawn = false;
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM] SpawnWorldActors: GetWorld() is null — cannot spawn."));
+        return;
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] SpawnWorldActors: spawning %d block(s)."),
+        PendingBlocks.Num());
+
+    int32 SpawnCount = 0;
+    for (const FDwmBlock& Block : PendingBlocks)
+    {
+        const FDwmAssetBinding* Binding = PendingBindings.Find(Block.BlockId);
+        if (!Binding)
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block '%s' has no binding — skipping."), *Block.Name);
+            continue;
+        }
+
+        // Space actors along X so multiple blocks don't overlap
+        const FVector SpawnLocation(SpawnCount * 300.0f, 0.0f, 200.0f);
+
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.Name = FName(*FString::Printf(
+            TEXT("DwmActor_%s"), *Block.BlockId));
+
+        ADwmPendulumActor* Actor = World->SpawnActor<ADwmPendulumActor>(
+            ADwmPendulumActor::StaticClass(),
+            SpawnLocation,
+            FRotator::ZeroRotator,
+            SpawnParams);
+
+        if (Actor)
+        {
+            static const TArray<FDwmSimSample> EmptySamples;
+            const TArray<FDwmSimSample>& Samples =
+                PendingSamples.Contains(Block.BlockId)
+                ? PendingSamples[Block.BlockId]
+                : EmptySamples;
+
+            Actor->InitialiseFromPackage(Block, *Binding, Samples);
+            SpawnCount++;
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Spawned '%s' at (1160 0, 70)."),
+                *Block.Name, SpawnLocation.X);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM] SpawnActor failed for '%s'."), *Block.Name);
+        }
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] Spawn complete: %d actor(s)."), SpawnCount);
 }
