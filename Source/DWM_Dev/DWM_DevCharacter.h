@@ -12,6 +12,7 @@ class USkeletalMeshComponent;
 class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
+class ADwmTradeTerminalActor;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -65,6 +66,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = Weapon)
 	bool GetHasRifle();
 
+	/** Called by a nearby Day 18 trade terminal while the player is in interaction range. */
+	void SetActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal);
+	void ClearActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal);
+
 protected:
 	/** Called for movement input */
 	void Move(const FInputActionValue& Value);
@@ -72,10 +77,15 @@ protected:
 	/** Called for looking input */
 	void Look(const FInputActionValue& Value);
 
+	/** Explicit interaction action bound to E; it never settles a trade merely by overlap. */
+	void Interact();
+
 protected:
 	// APawn interface
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
 	// End of APawn interface
+
+	TWeakObjectPtr<ADwmTradeTerminalActor> ActiveTradeTerminal;
 
 public:
 	/** Returns Mesh1P subobject **/

@@ -2,12 +2,15 @@
 
 #include "DWM_DevCharacter.h"
 #include "DWM_DevProjectile.h"
+#include "DwmTradeTerminalActor.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Engine/Engine.h"
+#include "InputCoreTypes.h"
 #include "InputActionValue.h"
 #include "Engine/LocalPlayer.h"
 
@@ -61,6 +64,11 @@ void ADWM_DevCharacter::BeginPlay()
 
 void ADWM_DevCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
+	// EnhancedInputComponent deliberately deletes its legacy BindKey overload. Binding through
+	// the base input component keeps this temporary Day 18 interaction independent of a new
+	// Input Action asset, while the existing movement actions stay on Enhanced Input below.
+	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevCharacter::Interact);
+
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
@@ -73,6 +81,7 @@ void ADWM_DevCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 
 		// Looking
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ADWM_DevCharacter::Look);
+
 	}
 	else
 	{
@@ -115,4 +124,32 @@ void ADWM_DevCharacter::SetHasRifle(bool bNewHasRifle)
 bool ADWM_DevCharacter::GetHasRifle()
 {
 	return bHasRifle;
+}
+
+void ADWM_DevCharacter::SetActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal)
+{
+	ActiveTradeTerminal = TradeTerminal;
+}
+
+void ADWM_DevCharacter::ClearActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal)
+{
+	if (ActiveTradeTerminal.Get() == TradeTerminal)
+	{
+		ActiveTradeTerminal.Reset();
+	}
+}
+
+void ADWM_DevCharacter::Interact()
+{
+	if (ADwmTradeTerminalActor* TradeTerminal = ActiveTradeTerminal.Get())
+	{
+		TradeTerminal->ExecuteDemoTrade(this);
+		return;
+	}
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(0xD0018EULL, 2.0f, FColor::Yellow,
+			TEXT("No trade terminal in range."));
+	}
 }

@@ -2,6 +2,7 @@
 
 #include "DWM_DevGameMode.h"
 #include "DWM_DevCharacter.h"
+#include "DwmEconomyHud.h"
 #include "UObject/ConstructorHelpers.h"
 
 ADWM_DevGameMode::ADWM_DevGameMode()
@@ -10,5 +11,6 @@ ADWM_DevGameMode::ADWM_DevGameMode()
 	// set default pawn class to our Blueprinted character
 	static ConstructorHelpers::FClassFinder<APawn> PlayerPawnClassFinder(TEXT("/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter"));
 	DefaultPawnClass = PlayerPawnClassFinder.Class;
+	HUDClass = ADwmEconomyHud::StaticClass();
 
 }

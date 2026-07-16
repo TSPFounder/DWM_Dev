@@ -6,10 +6,19 @@
 #include "DwmGameInstance.h"
 #include "DwmWorldPackageTypes.h"
 #include "DwmPendulumActor.h"
+#include "DwmEconomyWriter.h"
+#include "DwmTradeTerminalActor.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Misc/Paths.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "SQLiteDatabase.h"
+#include "SQLitePreparedStatement.h"
+#include "TimerManager.h"
 
 // ---------------------------------------------------------------------------
 // Init — runs at game startup (before level loads). Read the package here;
@@ -45,6 +54,15 @@ void UDwmGameInstance::OnStart()
 {
     Super::OnStart();
     SpawnWorldActors();
+    RefreshEconomyState();
+
+    // The terminal is positioned relative to the gameplay pawn, which is not guaranteed to
+    // exist during Init(). Deferring one tick keeps the trigger in the loaded world.
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().SetTimerForNextTick(
+            FTimerDelegate::CreateUObject(this, &UDwmGameInstance::SpawnDemoTradeTerminal));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,4 +334,215 @@ void UDwmGameInstance::SpawnWorldActors()
 
     UE_LOG(LogTemp, Log,
         TEXT("[DWM] Spawn complete: %d actor(s)."), SpawnCount);
+}
+
+// ---------------------------------------------------------------------------
+// Day 18 economy round-trip: read current state, settle one fixed demo trade,
+// then read again so the visible state comes from the same SQLite file.
+// ---------------------------------------------------------------------------
+
+FString UDwmGameInstance::GetEconomyPackagePath() const
+{
+    return FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Databases/world_economy_spike.db")));
+}
+
+void UDwmGameInstance::SetEconomyStatus(const FString& Message, const FColor& Color)
+{
+    LastEconomyStatusMessage = Message;
+    UE_LOG(LogTemp, Log, TEXT("[DWM Economy] %s"), *Message);
+
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(0xD0018ULL, 6.0f, Color, Message);
+    }
+}
+
+bool UDwmGameInstance::RefreshEconomyState()
+{
+    const FString DbPath = GetEconomyPackagePath();
+    FSQLiteDatabase Db;
+    if (!Db.Open(*DbPath, ESQLiteDatabaseOpenMode::ReadOnly))
+    {
+        SetEconomyStatus(FString::Printf(
+            TEXT("Economy refresh failed to open '%s': %s"), *DbPath, *Db.GetLastError()), FColor::Red);
+        return false;
+    }
+
+    FSQLitePreparedStatement Stmt;
+    if (!Stmt.Create(Db,
+        TEXT("SELECT c.CommunityId, c.Name, "
+            "COALESCE((SELECT SUM(l.Amount) FROM StoneLedger l WHERE l.ToCommunityId = c.CommunityId), 0.0) "
+            "- COALESCE((SELECT SUM(l.Amount) FROM StoneLedger l WHERE l.FromCommunityId = c.CommunityId), 0.0), "
+            "v.Balance, v.Threshold, f.State "
+            "FROM Communities c "
+            "LEFT JOIN CommunityDollarVault v ON v.CommunityId = c.CommunityId "
+            "LEFT JOIN CommunityFailureStatus f ON f.CommunityId = c.CommunityId "
+            "ORDER BY c.CommunityId;"),
+        ESQLitePreparedStatementFlags::Persistent))
+    {
+        SetEconomyStatus(FString::Printf(
+            TEXT("Economy refresh query creation failed: %s"), *Db.GetLastError()), FColor::Red);
+        Db.Close();
+        return false;
+    }
+
+    TArray<FDwmCommunityEconomyState> LoadedStates;
+    for (;;)
+    {
+        const ESQLitePreparedStatementStepResult StepResult = Stmt.Step();
+        if (StepResult == ESQLitePreparedStatementStepResult::Done)
+        {
+            break;
+        }
+        if (StepResult != ESQLitePreparedStatementStepResult::Row)
+        {
+            SetEconomyStatus(FString::Printf(
+                TEXT("Economy refresh query failed: %s"), *Db.GetLastError()), FColor::Red);
+            Stmt.Destroy();
+            Db.Close();
+            return false;
+        }
+
+        FDwmCommunityEconomyState State;
+        const bool bReadOk =
+            Stmt.GetColumnValueByIndex(0, State.CommunityId)
+            && Stmt.GetColumnValueByIndex(1, State.CommunityName)
+            && Stmt.GetColumnValueByIndex(2, State.StoneBalance)
+            && Stmt.GetColumnValueByIndex(3, State.DollarVaultBalance)
+            && Stmt.GetColumnValueByIndex(4, State.DollarVaultThreshold)
+            && Stmt.GetColumnValueByIndex(5, State.FailureState);
+        if (!bReadOk)
+        {
+            SetEconomyStatus(FString::Printf(
+                TEXT("Economy refresh could not read a community row: %s"), *Db.GetLastError()), FColor::Red);
+            Stmt.Destroy();
+            Db.Close();
+            return false;
+        }
+
+        LoadedStates.Add(MoveTemp(State));
+    }
+
+    Stmt.Destroy();
+    Db.Close();
+
+    if (LoadedStates.IsEmpty())
+    {
+        SetEconomyStatus(TEXT("Economy refresh found no communities."), FColor::Red);
+        return false;
+    }
+
+    EconomyStates = MoveTemp(LoadedStates);
+    SetEconomyStatus(FString::Printf(
+        TEXT("Economy refreshed: %d communities loaded."), EconomyStates.Num()), FColor::Green);
+    return true;
+}
+
+bool UDwmGameInstance::ExecuteMountainBuysGrainFromValley()
+{
+    if (!RefreshEconomyState())
+    {
+        return false;
+    }
+
+    const FDwmCommunityEconomyState* MountainBefore = EconomyStates.FindByPredicate(
+        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("mountain"); });
+    const FDwmCommunityEconomyState* ValleyBefore = EconomyStates.FindByPredicate(
+        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("valley"); });
+    if (!MountainBefore || !ValleyBefore)
+    {
+        SetEconomyStatus(TEXT("Demo trade cannot run: Mountain or Valley is missing from the economy snapshot."), FColor::Red);
+        return false;
+    }
+
+    const double MountainBalanceBefore = MountainBefore->StoneBalance;
+    const double ValleyBalanceBefore = ValleyBefore->StoneBalance;
+    const TArray<FString> KnownCommunityIds = {
+        TEXT("mountain"), TEXT("hillside"), TEXT("valley"), TEXT("suburb"), TEXT("city") };
+    const TArray<FString> KnownResourceIds = {
+        TEXT("timber"), TEXT("wind_power"), TEXT("orchard_fruit"), TEXT("wool"), TEXT("grain"),
+        TEXT("water"), TEXT("skilled_labor"), TEXT("textiles"), TEXT("manufactured_tools"), TEXT("software_services") };
+
+    constexpr double StoneAmount = 20.0;
+    const FDwmEconomyWriter::FWriteTradeResult Result = FDwmEconomyWriter::WriteTrade(
+        GetEconomyPackagePath(), KnownCommunityIds, KnownResourceIds,
+        TEXT("mountain"), TEXT("valley"), StoneAmount, TEXT("grain"), StoneAmount,
+        TEXT("Mountain buys grain from Valley"));
+    if (!Result.bSuccess)
+    {
+        SetEconomyStatus(FString::Printf(TEXT("Trade rejected: %s"), *Result.Message), FColor::Red);
+        return false;
+    }
+
+    if (!RefreshEconomyState())
+    {
+        SetEconomyStatus(FString::Printf(
+            TEXT("Trade %s settled, but the economy display could not refresh."), *Result.TransactionId), FColor::Red);
+        return false;
+    }
+
+    const FDwmCommunityEconomyState* MountainAfter = EconomyStates.FindByPredicate(
+        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("mountain"); });
+    const FDwmCommunityEconomyState* ValleyAfter = EconomyStates.FindByPredicate(
+        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("valley"); });
+    const bool bExpectedDeltas = MountainAfter && ValleyAfter
+        && FMath::IsNearlyEqual(MountainAfter->StoneBalance, MountainBalanceBefore - StoneAmount)
+        && FMath::IsNearlyEqual(ValleyAfter->StoneBalance, ValleyBalanceBefore + StoneAmount);
+    if (!bExpectedDeltas)
+    {
+        SetEconomyStatus(TEXT("Trade settled, but the refreshed balances do not match the expected Mountain/Valley deltas."), FColor::Red);
+        return false;
+    }
+
+    SetEconomyStatus(FString::Printf(
+        TEXT("Trade complete: Mountain %.0f -> %.0f St | Valley %.0f -> %.0f St"),
+        MountainBalanceBefore, MountainAfter->StoneBalance,
+        ValleyBalanceBefore, ValleyAfter->StoneBalance), FColor::Green);
+    return true;
+}
+
+void UDwmGameInstance::SpawnDemoTradeTerminal()
+{
+    if (bDemoTradeTerminalSpawned)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+    APawn* PlayerPawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+    if (!World || !PlayerPawn)
+    {
+        if (++DemoTradeTerminalSpawnAttempts <= 5 && World)
+        {
+            FTimerHandle RetryHandle;
+            World->GetTimerManager().SetTimer(
+                RetryHandle,
+                FTimerDelegate::CreateUObject(this, &UDwmGameInstance::SpawnDemoTradeTerminal),
+                0.25f,
+                false);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DWM Economy] Could not find the player pawn to place the Day 18 trade terminal."));
+        }
+        return;
+    }
+
+    const FVector SpawnLocation = PlayerPawn->GetActorLocation()
+        + (PlayerPawn->GetActorForwardVector() * 300.0f)
+        + FVector(0.0f, 0.0f, -80.0f);
+    FActorSpawnParameters SpawnParameters;
+    SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    ADwmTradeTerminalActor* Terminal = World->SpawnActor<ADwmTradeTerminalActor>(
+        ADwmTradeTerminalActor::StaticClass(), SpawnLocation, PlayerPawn->GetActorRotation(), SpawnParameters);
+    if (!Terminal)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DWM Economy] Failed to spawn the Day 18 trade terminal."));
+        return;
+    }
+
+    bDemoTradeTerminalSpawned = true;
+    SetEconomyStatus(TEXT("Day 18 ready: walk to the gold trade terminal and press E to buy Grain from Valley."), FColor::Cyan);
 }
