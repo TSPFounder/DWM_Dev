@@ -42,10 +42,15 @@ ADwmTradeTerminalActor::ADwmTradeTerminalActor()
     TerminalLabel->SetupAttachment(InteractionSphere);
     TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 145.0f));
     TerminalLabel->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
-    TerminalLabel->SetText(FText::FromString(TEXT("Mountain Grain Trade\nPress E")));
     TerminalLabel->SetHorizontalAlignment(EHTA_Center);
     TerminalLabel->SetWorldSize(28.0f);
     TerminalLabel->SetTextRenderColor(FColor(255, 210, 60));
+    // NOTE: the label's actual text is set in BeginPlay, not here -- Day 20 fields
+    // (BuyerCommunityId/SellerCommunityId/ResourceId/etc.) are UPROPERTY EditAnywhere values
+    // that get applied to this instance AFTER the constructor runs (during actor spawn/load),
+    // so reading them here in the constructor would still see the class defaults, not
+    // whatever a placed instance was actually configured to. Same reasoning applies to the
+    // on-screen overlap prompt below.
 }
 
 void ADwmTradeTerminalActor::BeginPlay()
@@ -53,6 +58,19 @@ void ADwmTradeTerminalActor::BeginPlay()
     Super::BeginPlay();
     InteractionSphere->OnComponentBeginOverlap.AddDynamic(this, &ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap);
     InteractionSphere->OnComponentEndOverlap.AddDynamic(this, &ADwmTradeTerminalActor::OnInteractionSphereEndOverlap);
+
+    TerminalLabel->SetText(FText::FromString(FString::Printf(TEXT("%s\nPress E"), *BuildTradeDescription())));
+}
+
+FString ADwmTradeTerminalActor::BuildTradeDescription() const
+{
+    if (!TradeDescription.IsEmpty())
+    {
+        return TradeDescription;
+    }
+    // Auto-generated fallback when no flavor text is configured for this instance.
+    return FString::Printf(TEXT("%s buys %.0f %s from %s for %.0f St"),
+        *BuyerCommunityId, Quantity, *ResourceId, *SellerCommunityId, Amount);
 }
 
 void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* OverlappedComponent,
@@ -65,7 +83,7 @@ void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(TradePromptMessageKey, -1.0f, FColor::Yellow,
-                TEXT("Press E: Mountain buys 20 Grain from Valley for 20 St"));
+                FString::Printf(TEXT("Press E: %s"), *BuildTradeDescription()));
         }
     }
 }
@@ -83,10 +101,11 @@ void ADwmTradeTerminalActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* 
     }
 }
 
-void ADwmTradeTerminalActor::ExecuteDemoTrade(ADWM_DevCharacter* InteractingCharacter)
+void ADwmTradeTerminalActor::ExecuteTrade(ADWM_DevCharacter* InteractingCharacter)
 {
     if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
     {
-        GameInstance->ExecuteMountainBuysGrainFromValley();
+        GameInstance->ExecuteConfiguredTrade(BuyerCommunityId, SellerCommunityId, ResourceId, Amount, Quantity,
+            BuildTradeDescription());
     }
 }

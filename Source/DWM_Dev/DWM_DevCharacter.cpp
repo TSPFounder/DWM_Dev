@@ -23,11 +23,11 @@ ADWM_DevCharacter::ADWM_DevCharacter()
 {
 	// Character doesnt have a rifle at start
 	bHasRifle = false;
-	
+
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(55.f, 96.0f);
-		
-	// Create a CameraComponent	
+
+	// Create a CameraComponent
 	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
 	FirstPersonCameraComponent->SetupAttachment(GetCapsuleComponent());
 	FirstPersonCameraComponent->SetRelativeLocation(FVector(-10.f, 0.f, 60.f)); // Position the camera
@@ -46,7 +46,7 @@ ADWM_DevCharacter::ADWM_DevCharacter()
 
 void ADWM_DevCharacter::BeginPlay()
 {
-	// Call the base class  
+	// Call the base class
 	Super::BeginPlay();
 
 	// Add Input Mapping Context
@@ -97,7 +97,7 @@ void ADWM_DevCharacter::Move(const FInputActionValue& Value)
 
 	if (Controller != nullptr)
 	{
-		// add movement 
+		// add movement
 		AddMovementInput(GetActorForwardVector(), MovementVector.Y);
 		AddMovementInput(GetActorRightVector(), MovementVector.X);
 	}
@@ -143,7 +143,10 @@ void ADWM_DevCharacter::Interact()
 {
 	if (ADwmTradeTerminalActor* TradeTerminal = ActiveTradeTerminal.Get())
 	{
-		TradeTerminal->ExecuteDemoTrade(this);
+		// Day 20: renamed from ExecuteDemoTrade -- this terminal may now be configured with
+		// any storyline trade, not just the original Mountain/Valley demo, so "Demo" no
+		// longer describes what it does.
+		TradeTerminal->ExecuteTrade(this);
 		return;
 	}
 

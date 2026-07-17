@@ -20,6 +20,27 @@
 #include "SQLitePreparedStatement.h"
 #include "TimerManager.h"
 
+namespace
+{
+    // Shared by both ExecuteMountainBuysGrainFromValley and ExecuteConfiguredTrade -- the
+    // same lists that already existed inline in the former, hoisted out so both share one
+    // definition instead of drifting apart.
+    const TArray<FString>& KnownCommunityIds()
+    {
+        static const TArray<FString> Ids = {
+            TEXT("mountain"), TEXT("hillside"), TEXT("valley"), TEXT("suburb"), TEXT("city") };
+        return Ids;
+    }
+
+    const TArray<FString>& KnownResourceIds()
+    {
+        static const TArray<FString> Ids = {
+            TEXT("timber"), TEXT("wind_power"), TEXT("orchard_fruit"), TEXT("wool"), TEXT("grain"),
+            TEXT("water"), TEXT("skilled_labor"), TEXT("textiles"), TEXT("manufactured_tools"), TEXT("software_services") };
+        return Ids;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Init — runs at game startup (before level loads). Read the package here;
 // defer spawning to OnStart().
@@ -444,34 +465,47 @@ bool UDwmGameInstance::RefreshEconomyState()
 
 bool UDwmGameInstance::ExecuteMountainBuysGrainFromValley()
 {
+    // Reuse, don't rebuild (Day 20 Task 2): the original Day 18 demo trade, now expressed as
+    // a call into the generalized path with its original fixed parameters. Mountain is the
+    // BUYER (pays Stone, first arg); Valley is the SELLER (receives Stone, provides Grain,
+    // second arg) -- matches the original hardcoded WriteTrade(..., "mountain", "valley", ...)
+    // call exactly.
+    return ExecuteConfiguredTrade(TEXT("mountain"), TEXT("valley"), TEXT("grain"), 20.0, 20.0,
+        TEXT("Mountain buys grain from Valley"));
+}
+
+bool UDwmGameInstance::ExecuteConfiguredTrade(const FString& BuyerCommunityId, const FString& SellerCommunityId,
+    const FString& ResourceId, double Amount, double Quantity, const FString& Memo)
+{
     if (!RefreshEconomyState())
     {
         return false;
     }
 
-    const FDwmCommunityEconomyState* MountainBefore = EconomyStates.FindByPredicate(
-        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("mountain"); });
-    const FDwmCommunityEconomyState* ValleyBefore = EconomyStates.FindByPredicate(
-        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("valley"); });
-    if (!MountainBefore || !ValleyBefore)
+    const FDwmCommunityEconomyState* BuyerBefore = EconomyStates.FindByPredicate(
+        [&BuyerCommunityId](const FDwmCommunityEconomyState& State) { return State.CommunityId == BuyerCommunityId; });
+    const FDwmCommunityEconomyState* SellerBefore = EconomyStates.FindByPredicate(
+        [&SellerCommunityId](const FDwmCommunityEconomyState& State) { return State.CommunityId == SellerCommunityId; });
+    if (!BuyerBefore || !SellerBefore)
     {
-        SetEconomyStatus(TEXT("Demo trade cannot run: Mountain or Valley is missing from the economy snapshot."), FColor::Red);
+        SetEconomyStatus(FString::Printf(
+            TEXT("Trade cannot run: '%s' or '%s' is missing from the economy snapshot."),
+            *BuyerCommunityId, *SellerCommunityId), FColor::Red);
         return false;
     }
 
-    const double MountainBalanceBefore = MountainBefore->StoneBalance;
-    const double ValleyBalanceBefore = ValleyBefore->StoneBalance;
-    const TArray<FString> KnownCommunityIds = {
-        TEXT("mountain"), TEXT("hillside"), TEXT("valley"), TEXT("suburb"), TEXT("city") };
-    const TArray<FString> KnownResourceIds = {
-        TEXT("timber"), TEXT("wind_power"), TEXT("orchard_fruit"), TEXT("wool"), TEXT("grain"),
-        TEXT("water"), TEXT("skilled_labor"), TEXT("textiles"), TEXT("manufactured_tools"), TEXT("software_services") };
+    const double BuyerBalanceBefore = BuyerBefore->StoneBalance;
+    const double SellerBalanceBefore = SellerBefore->StoneBalance;
 
-    constexpr double StoneAmount = 20.0;
+    // BuyerCommunityId pays Stone and receives the resource; SellerCommunityId receives Stone
+    // and provides the resource -- passed straight through as WriteTrade's
+    // FromCommunityId/ToCommunityId with no crossing (WriteTrade's From = payer, To =
+    // receiver; this function's Buyer/Seller naming matches that directly, unlike the
+    // terminal actor's own field names, which are Buyer/Seller for a DIFFERENT reason: see
+    // DwmTradeTerminalActor.h's comment on why "From"/"To" was avoided there).
     const FDwmEconomyWriter::FWriteTradeResult Result = FDwmEconomyWriter::WriteTrade(
-        GetEconomyPackagePath(), KnownCommunityIds, KnownResourceIds,
-        TEXT("mountain"), TEXT("valley"), StoneAmount, TEXT("grain"), StoneAmount,
-        TEXT("Mountain buys grain from Valley"));
+        GetEconomyPackagePath(), KnownCommunityIds(), KnownResourceIds(),
+        BuyerCommunityId, SellerCommunityId, Amount, ResourceId, Quantity, Memo);
     if (!Result.bSuccess)
     {
         SetEconomyStatus(FString::Printf(TEXT("Trade rejected: %s"), *Result.Message), FColor::Red);
@@ -485,23 +519,23 @@ bool UDwmGameInstance::ExecuteMountainBuysGrainFromValley()
         return false;
     }
 
-    const FDwmCommunityEconomyState* MountainAfter = EconomyStates.FindByPredicate(
-        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("mountain"); });
-    const FDwmCommunityEconomyState* ValleyAfter = EconomyStates.FindByPredicate(
-        [](const FDwmCommunityEconomyState& State) { return State.CommunityId == TEXT("valley"); });
-    const bool bExpectedDeltas = MountainAfter && ValleyAfter
-        && FMath::IsNearlyEqual(MountainAfter->StoneBalance, MountainBalanceBefore - StoneAmount)
-        && FMath::IsNearlyEqual(ValleyAfter->StoneBalance, ValleyBalanceBefore + StoneAmount);
+    const FDwmCommunityEconomyState* BuyerAfter = EconomyStates.FindByPredicate(
+        [&BuyerCommunityId](const FDwmCommunityEconomyState& State) { return State.CommunityId == BuyerCommunityId; });
+    const FDwmCommunityEconomyState* SellerAfter = EconomyStates.FindByPredicate(
+        [&SellerCommunityId](const FDwmCommunityEconomyState& State) { return State.CommunityId == SellerCommunityId; });
+    const bool bExpectedDeltas = BuyerAfter && SellerAfter
+        && FMath::IsNearlyEqual(BuyerAfter->StoneBalance, BuyerBalanceBefore - Amount)
+        && FMath::IsNearlyEqual(SellerAfter->StoneBalance, SellerBalanceBefore + Amount);
     if (!bExpectedDeltas)
     {
-        SetEconomyStatus(TEXT("Trade settled, but the refreshed balances do not match the expected Mountain/Valley deltas."), FColor::Red);
+        SetEconomyStatus(TEXT("Trade settled, but the refreshed balances do not match the expected deltas."), FColor::Red);
         return false;
     }
 
     SetEconomyStatus(FString::Printf(
-        TEXT("Trade complete: Mountain %.0f -> %.0f St | Valley %.0f -> %.0f St"),
-        MountainBalanceBefore, MountainAfter->StoneBalance,
-        ValleyBalanceBefore, ValleyAfter->StoneBalance), FColor::Green);
+        TEXT("Trade complete: %s %.0f -> %.0f St | %s %.0f -> %.0f St"),
+        *BuyerCommunityId, BuyerBalanceBefore, BuyerAfter->StoneBalance,
+        *SellerCommunityId, SellerBalanceBefore, SellerAfter->StoneBalance), FColor::Green);
     return true;
 }
 
@@ -546,6 +580,11 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         return;
     }
 
+    // Terminal's default UPROPERTY values (ToCommunityId="mountain", FromCommunityId="valley",
+    // ResourceId="grain", Amount=20, Quantity=20) reproduce the original Day 18 demo trade
+    // exactly, so this runtime-spawned convenience terminal keeps working unchanged. The four
+    // additional storyline terminals (Hillside/Suburb/City) are level-placed instances with
+    // their own configured trades instead -- see AGENT_LOG.md for placement instructions.
     bDemoTradeTerminalSpawned = true;
     SetEconomyStatus(TEXT("Day 18 ready: walk to the gold trade terminal and press E to buy Grain from Valley."), FColor::Cyan);
 }

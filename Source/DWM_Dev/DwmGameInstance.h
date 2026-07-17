@@ -47,8 +47,26 @@ public:
     UFUNCTION(BlueprintCallable, Category = "DWM|Economy")
     bool RefreshEconomyState();
 
+    /** Day 18's original fixed demo trade -- kept as-is (reuse, don't rebuild) as a thin
+        wrapper over the Day 20 generalized path below, with the same 20-Stone-for-20-Grain
+        parameters it always had. */
     UFUNCTION(BlueprintCallable, Category = "DWM|Economy")
     bool ExecuteMountainBuysGrainFromValley();
+
+    /** Day 20: validates and writes ANY configured trade via FDwmEconomyWriter::WriteTrade
+        (the proven Day 17 write path, called here with different parameters, not
+        reimplemented), then refreshes EconomyStates and confirms the buyer/seller deltas came
+        out exactly right -- same before/after verification ExecuteMountainBuysGrainFromValley
+        already did, just generalized to work for any community/resource/amount instead of one
+        hardcoded pair.
+        BuyerCommunityId pays Stone and receives the resource -- passed directly as
+        WriteTrade's FromCommunityId (the payer). SellerCommunityId receives Stone and
+        provides the resource -- passed directly as WriteTrade's ToCommunityId (the
+        receiver). No crossing/inversion between this function's parameter names and
+        WriteTrade's own. */
+    UFUNCTION(BlueprintCallable, Category = "DWM|Economy")
+    bool ExecuteConfiguredTrade(const FString& BuyerCommunityId, const FString& SellerCommunityId,
+        const FString& ResourceId, double Amount, double Quantity, const FString& Memo);
 
     UPROPERTY(BlueprintReadOnly, Category = "DWM")
     FString PendingWorldId;
