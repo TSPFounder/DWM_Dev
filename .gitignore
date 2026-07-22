@@ -22,6 +22,54 @@ Saved/
 *.obj
 
 # Keep these (do NOT ignore):
-# Config/, Content/, Source/, *.uproject, Plugins/<your plugins>/SourceContent/PhotoR_Landscape_4/
+# Config/, Content/, Source/, *.uproject, Plugins/<your plugins>/Source
 Backup/
 Content/Databases/
+
+# Locally-installed Marketplace content. These assets remain available to this
+# workstation through Unreal/Epic, but are not part of this repository.
+/Content/AlpineLandscape/
+/Content/AmericanCityPacks/
+/Content/CharacterCustomizer/
+/Content/CityStreets/
+/Content/CraftingStations/
+/Content/HQRetroFarmhouse/
+/Content/HQ_ResidentialHouse/
+/Content/LookoutTower/
+/Content/ModularHouses/
+/Content/MountainGrassland/
+/Content/MountainVillageEnv/
+/Content/PhotoR_Landscape_4/
+/Content/ResidentialHouses/
+/Content/SnowyPeaks/
+/Content/SteppeEnv/
+/Content/SurvivorBase/
+/Content/TownShops/
+/Content/Train_Station/
+/Content/TreePackBeech2/
+/Content/TreePackBirch/
+/Content/TreePackMaple/
+/Content/TreePackOak/
+/Content/TreePackPine/
+/Content/TreePackPoplar/
+/Content/TreePackRealApple/
+/Content/TreePackSpruce/
+/Content/TreePackWillow/
+/Content/UltraDynamicSky/
+/Content/VillageHouse/
+/Content/VillageHousePack_v1/
+/Content/Wind_Turbine/
+/Content/YI_NPC/
+
+# External-actor data created for locally-installed Marketplace/demo maps.
+/Content/__ExternalActors__/AmericanCityPacks/
+/Content/__ExternalActors__/CityStreets/
+/Content/__ExternalActors__/ThirdPerson/
+/Content/__ExternalActors__/TownShops/
+/Content/__ExternalActors__/Untitled/
+/Content/__ExternalObjects__/CityStreets/
+/Content/__ExternalObjects__/Untitled/
+/Content/Barnyard_Vol3_Barn/
+/Content/HQAbandonedSchool/
+/Content/ProceduralRoadGenerator/
+/Content/__ExternalActors__/PhotoR_Landscape_4/
