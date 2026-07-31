@@ -1,0 +1,951 @@
+// DwmNpcActor.cpp
+//
+// Keep the source ASCII-safe; approved em dashes use universal character names.
+
+#include "DwmNpcActor.h"
+
+#include "DWM_DevCharacter.h"
+#include "DwmDialogueWidget.h"
+#include "DwmGameInstance.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
+#include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/SphereComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
+
+#define LOCTEXT_NAMESPACE "DwmNpc"
+
+namespace
+{
+    // Distinct from the trade terminal's own on-screen message key (0xD0018A) so an NPC
+    // and a terminal standing near each other don't overwrite one another's prompt.
+    constexpr uint64 NpcPromptMessageKey = 0xD00190ULL;
+}
+
+ADwmNpcActor::ADwmNpcActor()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+    SetRootComponent(SceneRoot);
+
+    NpcMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("NpcMesh"));
+    NpcMesh->SetupAttachment(SceneRoot);
+    // The Hank asset is authored facing +Y, while AActor movement treats +X as forward.
+    // Rotate only the visual mesh so actor yaw, waypoint math, and interaction transforms
+    // stay in normal Unreal coordinates.
+    NpcMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+    // Set-dressing, not a physical obstacle: the player should not be able to shove Hank
+    // around, and he should not block movement through the marker area. This also means
+    // his walk loop can't push the player -- the movement below is a plain SetActorLocation
+    // with no sweep, so nothing collides either way.
+    NpcMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    InteractionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionSphere"));
+    InteractionSphere->SetupAttachment(SceneRoot);
+    InteractionSphere->InitSphereRadius(200.0f);
+    InteractionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    InteractionSphere->SetCollisionObjectType(ECC_WorldDynamic);
+    InteractionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+    InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+    InteractionSphere->SetGenerateOverlapEvents(true);
+
+    DisplayName = LOCTEXT("HankName", "Hank");
+    RequiredSellerCommunityIds = { TEXT("hillside"), TEXT("valley"), TEXT("suburb"), TEXT("city") };
+
+    // Give the MVP Hank a complete, usable setup even when no content-only Blueprint
+    // has been created yet. These are the civilian Hank mesh and in-place mobility
+    // clips already shipped in DWM_Dev. Individual Blueprint children may override all
+    // three assets later without changing the native interaction/movement behavior.
+    static ConstructorHelpers::FObjectFinder<USkeletalMesh> HankMeshFinder(
+        TEXT("/Game/YI_NPC/Meshes/Hank/Skeletal/SK_Hank_02.SK_Hank_02"));
+    if (HankMeshFinder.Succeeded())
+    {
+        NpcMesh->SetSkeletalMesh(HankMeshFinder.Object);
+    }
+
+    static ConstructorHelpers::FObjectFinder<UAnimSequence> IdleAnimationFinder(
+        TEXT("/Game/YI_NPC/Animation/Mocap_Mobility/IPC/MOB1_Stand_Relaxed_Idle_v2_IPC.MOB1_Stand_Relaxed_Idle_v2_IPC"));
+    if (IdleAnimationFinder.Succeeded())
+    {
+        IdleAnimation = IdleAnimationFinder.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UAnimSequence> WalkAnimationFinder(
+        TEXT("/Game/YI_NPC/Animation/Mocap_Mobility/IPC/MOB1_Walk_F_Loop_IPC.MOB1_Walk_F_Loop_IPC"));
+    if (WalkAnimationFinder.Succeeded())
+    {
+        WalkAnimation = WalkAnimationFinder.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UAnimSequence> TurnLeftAnimationFinder(
+        TEXT("/Game/YI_NPC/Animation/Mocap_Mobility/IPC/MOB1_Stand_Rlx_Turn_In_Place_L_Loop_IPC.MOB1_Stand_Rlx_Turn_In_Place_L_Loop_IPC"));
+    if (TurnLeftAnimationFinder.Succeeded())
+    {
+        TurnLeftAnimation = TurnLeftAnimationFinder.Object;
+    }
+
+    static ConstructorHelpers::FObjectFinder<UAnimSequence> TurnRightAnimationFinder(
+        TEXT("/Game/YI_NPC/Animation/Mocap_Mobility/IPC/MOB1_Stand_Rlx_Turn_In_Place_R_Loop_IPC.MOB1_Stand_Rlx_Turn_In_Place_R_Loop_IPC"));
+    if (TurnRightAnimationFinder.Succeeded())
+    {
+        TurnRightAnimation = TurnRightAnimationFinder.Object;
+    }
+
+    // The native widget builds a clean static dialogue panel. A WBP_DwmDialogue child
+    // can still be assigned later for visual polish without changing Hank's C++ state
+    // machine or the E-key interaction route.
+    DialogueWidgetClass = UDwmDialogueWidget::StaticClass();
+
+    PopulateDefaultHankDialogue();
+}
+
+// ---------------------------------------------------------------------------
+// Default dialogue -- Hank's copy, verbatim from DWM_MVP_Dialogue.md (Mountain section).
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::PopulateDefaultHankDialogue()
+{
+    const FText Hank = LOCTEXT("HankSpeaker", "Hank");
+
+    auto MakeLine = [&Hank](const FText& Body, const FText& Prompt)
+    {
+        FDwmDialogueLine Line;
+        Line.Speaker = Hank;
+        Line.Body = Body;
+        Line.AdvancePrompt = Prompt;
+        return Line;
+    };
+
+    {
+        FDwmDialogueSequence Approach;
+        Approach.Lines.Add(MakeLine(
+            LOCTEXT("HankApproach",
+                "That turbine came with the land when we settled here \u2014 nobody's turned it in "
+                "years, and nobody left so much as a drawing of how it goes back together. We need "
+                "real plans before anyone touches a wrench, and hands, parts, and food for the crew "
+                "once we do. Head down to the other communities. Trade fair, come back with what we "
+                "need, and let's get this thing spinning again."),
+            LOCTEXT("HankApproachPrompt", "What exactly do we need?")));
+        DialogueByState.Add(EDwmDialogueState::Approach, Approach);
+    }
+
+    {
+        FDwmDialogueSequence Details;
+        Details.Lines.Add(MakeLine(
+            LOCTEXT("HankQuestDetails",
+                "Start with Hillside \u2014 they've got engineers who can put together real CAD "
+                "drawings and a simulation model, so whoever fixes this thing isn't guessing. After "
+                "that: Grain, to feed the crew while they're working the mount. Hands that know "
+                "rigging, because none of us have hung something this heavy before. And tools from "
+                "the city \u2014 precision work no one up here can forge."),
+            FText::GetEmpty()));
+        DialogueByState.Add(EDwmDialogueState::QuestDetails, Details);
+    }
+
+    {
+        FDwmDialogueSequence InProgress;
+        InProgress.Lines.Add(MakeLine(
+            LOCTEXT("HankReturnInProgress",
+                "How's it going down there? Whatever you've got, it's a start."),
+            FText::GetEmpty()));
+        DialogueByState.Add(EDwmDialogueState::ReturnInProgress, InProgress);
+    }
+
+    {
+        FDwmDialogueSequence AllDone;
+        AllDone.Lines.Add(MakeLine(
+            LOCTEXT("HankReturnComplete",
+                "Real plans for the mount, grain for the crew, hands to do the rigging, and tools "
+                "to finish it right. That's everything. Let's bring this old thing back to life."),
+            FText::GetEmpty()));
+        DialogueByState.Add(EDwmDialogueState::ReturnAllTradesComplete, AllDone);
+    }
+
+    {
+        FDwmDialogueSequence Farewell;
+        Farewell.Lines.Add(MakeLine(
+            LOCTEXT("HankFarewell",
+                "There it goes. Every community up on that ledger had a hand in this \u2014 yours "
+                "included."),
+            FText::GetEmpty()));
+        DialogueByState.Add(EDwmDialogueState::Farewell, Farewell);
+    }
+
+    {
+        // Flavor only -- gates nothing. The doc marks all three as freely cuttable.
+        // NOTE: the first line references "the storm", but DWM_MVP_Storyline.md's
+        // 2026-07-18 update reframed the premise away from storm damage to a turbine that
+        // was simply never run. Left verbatim rather than silently rewritten -- flagged
+        // for a content decision.
+        FDwmDialogueSequence Ambient;
+        Ambient.Lines.Add(MakeLine(
+            LOCTEXT("HankAmbient1",
+                "Freshcan crew finished the new houses last week \u2014 good timing, since the storm "
+                "put three families out of their own. Village's a little more crowded now, but "
+                "nobody's sleeping in a barn."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(
+            LOCTEXT("HankAmbient2",
+                "Solar panels are holding the mountain over while the turbine's down. Control "
+                "station keeps it steady, and the bank stores what we don't use by day. Won't power "
+                "much more than lights and the radio, but it's something."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(
+            LOCTEXT("HankAmbient3",
+                "Fish trap's been good to us this season \u2014 one less thing to worry about while "
+                "everyone's hands are full with the turbine. Small mercy."),
+            FText::GetEmpty()));
+        DialogueByState.Add(EDwmDialogueState::Ambient, Ambient);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    InteractionSphere->OnComponentBeginOverlap.AddDynamic(this, &ADwmNpcActor::OnInteractionSphereBeginOverlap);
+    InteractionSphere->OnComponentEndOverlap.AddDynamic(this, &ADwmNpcActor::OnInteractionSphereEndOverlap);
+
+    // Everything the loop does is relative to wherever he was placed, so a level designer
+    // moves the whole routine by moving the actor -- no waypoint actors to keep in sync.
+    HomeLocation = GetActorLocation();
+    HomeRotation = GetActorRotation();
+    PreviousLocation = HomeLocation;
+
+    // OpenLevel destroys this actor, but the GameInstance survives. Restore Hank's
+    // conversation progress so returning from another community is actually a return visit.
+    if (const UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+    {
+        bHasDeliveredOpening = GameInstance->HasDeliveredHankOpening();
+        bFarewellUnlocked = GameInstance->IsHankFarewellUnlocked();
+        ReturnVisitCount = GameInstance->GetHankReturnVisitCount();
+        AmbientCursor = GameInstance->GetHankAmbientCursor();
+    }
+
+    // Which animation path applies is decided by what's actually on the mesh, not by a
+    // separate flag that could disagree with it.
+    bUsingAnimBlueprint = (NpcMesh && NpcMesh->GetAnimClass() != nullptr);
+
+    if (bUsingAnimBlueprint)
+    {
+        NpcMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM NPC] '%s' is driving animation through its Anim Blueprint (blended)."),
+            *GetNameSafe(this));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM NPC] '%s' has no Anim Blueprint -- falling back to single-node playback "
+                "(clips will cut rather than blend)."),
+            *GetNameSafe(this));
+
+        if (!IdleAnimation)
+        {
+            // Deliberately an error, not a silent no-op: with no Anim Blueprint AND no
+            // idle sequence, nothing drives the skeleton at all and the character stands
+            // in its reference (T) pose -- the exact problem this class exists to fix.
+            UE_LOG(LogTemp, Error,
+                TEXT("[DWM NPC] '%s' has neither an Anim Blueprint nor an IdleAnimation -- it "
+                    "will render in its reference (T) pose. Assign one or the other."),
+                *GetNameSafe(this));
+        }
+        if (bEnableScriptedMovement && !WalkAnimation)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM NPC] '%s' has scripted movement enabled but no WalkAnimation -- it "
+                    "will slide along in the idle pose."),
+                *GetNameSafe(this));
+        }
+    }
+
+    EnterActivity(EDwmNpcActivity::IdleAtMarker);
+}
+
+void ADwmNpcActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    EndDialogue();
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(OneShotAnimationTimer);
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
+void ADwmNpcActor::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    // Measured, not assumed from WalkSpeed: this reads zero while standing, tapers on the
+    // arrival frame when the step is clamped short, and stays correct while a
+    // conversation has movement suspended. The Anim Blueprint's idle/walk transition
+    // hangs off this, so a value that lied would show up as a walk cycle playing in place.
+    if (DeltaSeconds > SMALL_NUMBER)
+    {
+        const FVector CurrentLocation = GetActorLocation();
+        CurrentSpeed = FVector::Dist2D(CurrentLocation, PreviousLocation) / DeltaSeconds;
+        PreviousLocation = CurrentLocation;
+    }
+
+    if (Activity == EDwmNpcActivity::Talking)
+    {
+        // Turn to face whoever is talking to him. This is a response to an explicit E
+        // press, not proximity-driven behavior -- he does not react to the player merely
+        // standing nearby, which is the scope line SCOPE.md draws.
+        if (CurrentListener)
+        {
+            FVector ToListener = CurrentListener->GetActorLocation() - GetActorLocation();
+            ToListener.Z = 0.0f;
+            FaceDirection(ToListener, DeltaSeconds);
+        }
+        return;
+    }
+
+    if (bEnableScriptedMovement)
+    {
+        TickMovement(DeltaSeconds);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scripted movement loop
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::TickMovement(float DeltaSeconds)
+{
+    switch (Activity)
+    {
+    case EDwmNpcActivity::IdleAtMarker:
+    {
+        // Settle back to the placed facing while waiting.
+        const FRotator Current = GetActorRotation();
+        SetActorRotation(FMath::RInterpConstantTo(Current, HomeRotation, DeltaSeconds, TurnSpeed));
+
+        ActivityTimer -= DeltaSeconds;
+        if (ActivityTimer <= 0.0f)
+        {
+            ChooseNextTrip();
+        }
+        break;
+    }
+
+    case EDwmNpcActivity::WalkingToTurbine:
+        if (StepTowardTarget(DeltaSeconds))
+        {
+            EnterActivity(EDwmNpcActivity::WatchingTurbine);
+        }
+        break;
+
+    case EDwmNpcActivity::WatchingTurbine:
+    {
+        // Face the turbine while looking at it, if one was assigned.
+        if (TurbineActor)
+        {
+            FVector ToTurbine = TurbineActor->GetActorLocation() - GetActorLocation();
+            ToTurbine.Z = 0.0f;
+            FaceDirection(ToTurbine, DeltaSeconds);
+        }
+
+        ActivityTimer -= DeltaSeconds;
+        if (ActivityTimer <= 0.0f)
+        {
+            EnterActivity(EDwmNpcActivity::ReturningHome);
+        }
+        break;
+    }
+
+    case EDwmNpcActivity::Wandering:
+        if (StepTowardTarget(DeltaSeconds))
+        {
+            EnterActivity(EDwmNpcActivity::ReturningHome);
+        }
+        break;
+
+    case EDwmNpcActivity::ReturningHome:
+        if (StepTowardTarget(DeltaSeconds))
+        {
+            EnterActivity(EDwmNpcActivity::IdleAtMarker);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+bool ADwmNpcActor::StepTowardTarget(float DeltaSeconds)
+{
+    const FVector Current = GetActorLocation();
+
+    // Horizontal only: the ground trace owns Z, so a target sitting slightly above or
+    // below him must not count as "distance still to cover" or he'd never arrive.
+    FVector ToTarget = MoveTarget - Current;
+    ToTarget.Z = 0.0f;
+    const float Distance = ToTarget.Size();
+
+    if (Distance <= ArrivalTolerance)
+    {
+        SetTurningInPlace(false);
+        return true;
+    }
+
+    const FVector Direction = ToTarget / Distance;
+
+    const float SignedFacingError = FMath::FindDeltaAngleDegrees(
+        GetActorRotation().Yaw,
+        Direction.Rotation().Yaw);
+
+    // Turn before translating. Moving on the same frame that a return trip begins makes
+    // the actor travel backward/sideways while RInterp catches up, which reads as
+    // moonwalking. While aligning, play the matching mocap turn-in-place loop instead
+    // of the forward walk cycle.
+    const bool bNeedsTurn = FMath::Abs(SignedFacingError) > MovementFacingToleranceDegrees;
+    SetTurningInPlace(bNeedsTurn, SignedFacingError < 0.0f);
+    FaceDirection(Direction, DeltaSeconds);
+    if (bNeedsTurn)
+    {
+        return false;
+    }
+
+    // Never overshoot on a long frame.
+    const float StepDistance = FMath::Min(WalkSpeed * DeltaSeconds, Distance);
+
+    FVector NextLocation = Current + (Direction * StepDistance);
+    if (bSnapToGround)
+    {
+        NextLocation = ProjectToGround(NextLocation);
+    }
+
+    SetActorLocation(NextLocation);
+    return false;
+}
+
+void ADwmNpcActor::SetTurningInPlace(bool bNewTurningInPlace, bool bNewTurningLeft)
+{
+    const bool bDirectionChanged = bNewTurningInPlace && bTurningLeft != bNewTurningLeft;
+    if (bTurningInPlace == bNewTurningInPlace && !bDirectionChanged)
+    {
+        return;
+    }
+
+    bTurningInPlace = bNewTurningInPlace;
+    bTurningLeft = bNewTurningLeft;
+    RefreshLocomotionAnimation();
+}
+
+void ADwmNpcActor::FaceDirection(const FVector& WorldDirection, float DeltaSeconds)
+{
+    FVector Flat = WorldDirection;
+    Flat.Z = 0.0f;
+    if (Flat.IsNearlyZero())
+    {
+        return;
+    }
+
+    // Yaw only -- a walking NPC that pitches or rolls to face a target reads as broken.
+    const FRotator Target(0.0f, Flat.Rotation().Yaw, 0.0f);
+    const FRotator Current = GetActorRotation();
+    SetActorRotation(FMath::RInterpConstantTo(Current, Target, DeltaSeconds, TurnSpeed));
+}
+
+FVector ADwmNpcActor::ProjectToGround(const FVector& Point) const
+{
+    const UWorld* World = GetWorld();
+    if (!World)
+    {
+        return Point;
+    }
+
+    const FVector TraceStart = Point + FVector(0.0f, 0.0f, 200.0f);
+    const FVector TraceEnd = Point - FVector(0.0f, 0.0f, 1000.0f);
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(DwmNpcGroundTrace), /*bTraceComplex=*/false);
+    Params.AddIgnoredActor(this);
+
+    FHitResult Hit;
+    if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+    {
+        return FVector(Point.X, Point.Y, Hit.Location.Z + GroundOffset);
+    }
+
+    // No ground found (hole in the terrain, trace too short) -- keep the existing height
+    // rather than teleporting him into the void.
+    return Point;
+}
+
+void ADwmNpcActor::ChooseNextTrip()
+{
+    const bool bCanWander = (WanderRadius > 0.0f);
+    const bool bWanderThisTime = bCanWander && (FMath::FRand() < WanderChance);
+
+    EnterActivity(bWanderThisTime ? EDwmNpcActivity::Wandering : EDwmNpcActivity::WalkingToTurbine);
+}
+
+FVector ADwmNpcActor::PickWanderPoint() const
+{
+    const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+    // sqrt keeps points evenly spread over the disc instead of clustering at the centre.
+    const float Radius = WanderRadius * FMath::Sqrt(FMath::FRand());
+
+    const FVector Point = HomeLocation
+        + FVector(FMath::Cos(Angle) * Radius, FMath::Sin(Angle) * Radius, 0.0f);
+
+    return bSnapToGround ? ProjectToGround(Point) : Point;
+}
+
+void ADwmNpcActor::EnterActivity(EDwmNpcActivity NewActivity)
+{
+    bTurningInPlace = false;
+    Activity = NewActivity;
+
+    switch (NewActivity)
+    {
+    case EDwmNpcActivity::IdleAtMarker:
+        ActivityTimer = FMath::FRandRange(MarkerDwellSeconds.X, MarkerDwellSeconds.Y);
+        break;
+
+    case EDwmNpcActivity::WalkingToTurbine:
+    {
+        // Offset is in the actor's PLACED local space, not its current rotation -- he
+        // turns while walking, and a target that rotated with him would drift away.
+        const FVector WorldOffset = HomeRotation.RotateVector(TurbineWatchOffset);
+        MoveTarget = HomeLocation + WorldOffset;
+        if (bSnapToGround)
+        {
+            MoveTarget = ProjectToGround(MoveTarget);
+        }
+        break;
+    }
+
+    case EDwmNpcActivity::WatchingTurbine:
+    {
+        float WatchTime = FMath::FRandRange(TurbineWatchSeconds.X, TurbineWatchSeconds.Y);
+
+        // Don't start walking away part-way through the gesture, whichever asset type is
+        // actually driving it in the current mode.
+        if (bUsingAnimBlueprint && GestureAtTurbineMontage)
+        {
+            WatchTime = FMath::Max(WatchTime, GestureAtTurbineMontage->GetPlayLength());
+        }
+        else if (!bUsingAnimBlueprint && GestureAtTurbineAnimation)
+        {
+            WatchTime = FMath::Max(WatchTime, GestureAtTurbineAnimation->GetPlayLength());
+        }
+
+        PlayOneShot(GestureAtTurbineMontage, GestureAtTurbineAnimation);
+        ActivityTimer = WatchTime;
+        break;
+    }
+
+    case EDwmNpcActivity::Wandering:
+        MoveTarget = PickWanderPoint();
+        break;
+
+    case EDwmNpcActivity::ReturningHome:
+        MoveTarget = bSnapToGround ? ProjectToGround(HomeLocation) : HomeLocation;
+        break;
+
+    case EDwmNpcActivity::Talking:
+        break;
+    }
+
+    // In single-node mode, starting the activity's looping clip here would immediately
+    // overwrite the one-shot WatchingTurbine just started. In Anim Blueprint mode this
+    // whole call is a no-op (the montage layers over the state machine instead), so the
+    // guard only has to consider the single-node case.
+    const bool bJustStartedSingleNodeOneShot =
+        !bUsingAnimBlueprint
+        && NewActivity == EDwmNpcActivity::WatchingTurbine
+        && GestureAtTurbineAnimation != nullptr;
+
+    if (!bJustStartedSingleNodeOneShot)
+    {
+        RefreshLocomotionAnimation();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::RefreshLocomotionAnimation()
+{
+    if (!NpcMesh)
+    {
+        return;
+    }
+
+    if (bUsingAnimBlueprint)
+    {
+        // The state machine picks its own pose from GroundSpeed/Activity every frame.
+        // Calling PlayAnimation here would force the mesh back into single-node mode and
+        // silently kill the Anim Blueprint.
+        return;
+    }
+
+    const bool bMoving =
+        Activity == EDwmNpcActivity::WalkingToTurbine ||
+        Activity == EDwmNpcActivity::Wandering ||
+        Activity == EDwmNpcActivity::ReturningHome;
+
+    UAnimSequence* Clip = IdleAnimation;
+    if (bTurningInPlace)
+    {
+        Clip = bTurningLeft ? TurnLeftAnimation : TurnRightAnimation;
+        if (!Clip)
+        {
+            Clip = IdleAnimation;
+        }
+    }
+    else if (bMoving && WalkAnimation)
+    {
+        Clip = WalkAnimation;
+    }
+    if (!Clip)
+    {
+        return;
+    }
+
+    NpcMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+    NpcMesh->PlayAnimation(Clip, /*bLooping=*/true);
+}
+
+void ADwmNpcActor::PlayOneShot(UAnimMontage* Montage, UAnimSequence* Sequence)
+{
+    if (!NpcMesh)
+    {
+        return;
+    }
+
+    if (bUsingAnimBlueprint)
+    {
+        // Montages layer over the running state machine, so the walk/idle blend keeps
+        // going underneath and the montage ends on its own -- no timer needed, and no
+        // risk of knocking the mesh out of Anim Blueprint mode.
+        if (Montage)
+        {
+            if (UAnimInstance* AnimInstance = NpcMesh->GetAnimInstance())
+            {
+                AnimInstance->Montage_Play(Montage);
+            }
+        }
+        return;
+    }
+
+    if (!Sequence)
+    {
+        return;
+    }
+
+    NpcMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+    NpcMesh->PlayAnimation(Sequence, /*bLooping=*/false);
+
+    // Single-node mode has no state machine to fall back to, so return to the activity's
+    // looping clip manually once the one-shot has played out.
+    if (UWorld* World = GetWorld())
+    {
+        const float Length = Sequence->GetPlayLength();
+        World->GetTimerManager().ClearTimer(OneShotAnimationTimer);
+        if (Length > 0.0f)
+        {
+            World->GetTimerManager().SetTimer(OneShotAnimationTimer, this,
+                &ADwmNpcActor::RefreshLocomotionAnimation, Length, /*bLoop=*/false);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overlap -- registers/unregisters this NPC as the character's current interaction
+// target. Nothing here starts a conversation or changes his behavior; only an explicit
+// E press does.
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* OverlappedComponent,
+    AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+    bool bFromSweep, const FHitResult& SweepResult)
+{
+    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+    {
+        Character->SetActiveNpc(this);
+        if (GEngine)
+        {
+            GEngine->AddOnScreenDebugMessage(NpcPromptMessageKey, -1.0f, FColor::White,
+                FString::Printf(TEXT("Press E: Talk to %s"), *DisplayName.ToString()));
+        }
+    }
+}
+
+void ADwmNpcActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* OverlappedComponent,
+    AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+    {
+        // Walking away closes the panel -- otherwise it would hang on screen with no way
+        // to advance it, since E would no longer route back to this NPC.
+        if (CurrentListener == Character)
+        {
+            EndDialogue();
+        }
+        Character->ClearActiveNpc(this);
+        if (GEngine)
+        {
+            GEngine->RemoveOnScreenDebugMessage(NpcPromptMessageKey);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dialogue state selection
+// ---------------------------------------------------------------------------
+
+EDwmDialogueState ADwmNpcActor::SelectStateForThisInteraction() const
+{
+    // Act 3 payoff wins outright once the turbine beat has fired.
+    if (bFarewellUnlocked)
+    {
+        return EDwmDialogueState::Farewell;
+    }
+
+    // First contact: the brief, then the follow-up prompt chains into QuestDetails.
+    if (!bHasDeliveredOpening)
+    {
+        return EDwmDialogueState::Approach;
+    }
+
+    if (const UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+    {
+        TArray<FString> Partners;
+        if (GameInstance->GetCompletedTradePartners(BuyerCommunityId, Partners))
+        {
+            bool bAllComplete = true;
+            for (const FString& Required : RequiredSellerCommunityIds)
+            {
+                if (!Partners.Contains(Required))
+                {
+                    bAllComplete = false;
+                    break;
+                }
+            }
+            if (bAllComplete && RequiredSellerCommunityIds.Num() > 0)
+            {
+                return EDwmDialogueState::ReturnAllTradesComplete;
+            }
+        }
+        // A failed query falls through to ReturnInProgress rather than claiming
+        // completion -- the safe direction to be wrong in, since it can't skip content.
+    }
+
+    // First time back gets the real "how's it going" line; after that, flavor.
+    if (ReturnVisitCount == 0)
+    {
+        return EDwmDialogueState::ReturnInProgress;
+    }
+
+    const FDwmDialogueSequence* AmbientSequence = DialogueByState.Find(EDwmDialogueState::Ambient);
+    return (AmbientSequence && AmbientSequence->Lines.Num() > 0)
+        ? EDwmDialogueState::Ambient
+        : EDwmDialogueState::ReturnInProgress;
+}
+
+// ---------------------------------------------------------------------------
+// Dialogue flow
+// ---------------------------------------------------------------------------
+
+void ADwmNpcActor::BeginDialogue(ADWM_DevCharacter* InteractingCharacter)
+{
+    if (IsDialogueOpen() || !InteractingCharacter)
+    {
+        return;
+    }
+
+    if (!DialogueWidgetClass)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("[DWM NPC] '%s' has no DialogueWidgetClass assigned -- nothing to display."),
+            *GetNameSafe(this));
+        return;
+    }
+
+    APlayerController* PlayerController = Cast<APlayerController>(InteractingCharacter->GetController());
+    if (!PlayerController)
+    {
+        return;
+    }
+
+    ActiveWidget = CreateWidget<UDwmDialogueWidget>(PlayerController, DialogueWidgetClass);
+    if (!ActiveWidget)
+    {
+        return;
+    }
+
+    CurrentListener = InteractingCharacter;
+    CurrentState = SelectStateForThisInteraction();
+    CurrentLineIndex = 0;
+
+    if (CurrentState != EDwmDialogueState::Approach)
+    {
+        ++ReturnVisitCount;
+        if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+        {
+            GameInstance->IncrementHankReturnVisitCount();
+        }
+    }
+
+    // Stop mid-loop and hold position for the conversation. Remembering what he was doing
+    // means a two-line exchange doesn't reset his whole routine to the top.
+    ActivityBeforeDialogue = Activity;
+    Activity = EDwmNpcActivity::Talking;
+    RefreshLocomotionAnimation();
+
+    ActiveWidget->AddToViewport();
+    ActiveWidget->SetOwningNpc(this);
+    ShowCurrentLine();
+}
+
+void ADwmNpcActor::AdvanceDialogue()
+{
+    if (!IsDialogueOpen())
+    {
+        return;
+    }
+
+    ++CurrentLineIndex;
+
+    const FDwmDialogueSequence* Sequence = DialogueByState.Find(CurrentState);
+    const int32 LineCount = Sequence ? Sequence->Lines.Num() : 0;
+
+    if (CurrentLineIndex < LineCount)
+    {
+        ShowCurrentLine();
+        return;
+    }
+
+    // End of this state's lines. Approach is the one state that chains: its player prompt
+    // ("What exactly do we need?") leads straight into the QuestDetails brief rather than
+    // closing the panel.
+    if (CurrentState == EDwmDialogueState::Approach)
+    {
+        CurrentState = EDwmDialogueState::QuestDetails;
+        CurrentLineIndex = 0;
+        ShowCurrentLine();
+        return;
+    }
+
+    if (CurrentState == EDwmDialogueState::QuestDetails)
+    {
+        // The opening brief is done; every later visit uses the return-visit states.
+        bHasDeliveredOpening = true;
+        if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+        {
+            GameInstance->MarkHankOpeningDelivered();
+        }
+    }
+
+    if (CurrentState == EDwmDialogueState::Ambient)
+    {
+        // Advance the cursor so the next repeat visit starts on a different flavor line.
+        const FDwmDialogueSequence* AmbientSequence = DialogueByState.Find(EDwmDialogueState::Ambient);
+        if (AmbientSequence && AmbientSequence->Lines.Num() > 0)
+        {
+            AmbientCursor = (AmbientCursor + 1) % AmbientSequence->Lines.Num();
+            if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+            {
+                GameInstance->SetHankAmbientCursor(AmbientCursor);
+            }
+        }
+    }
+
+    EndDialogue();
+}
+
+void ADwmNpcActor::ShowCurrentLine()
+{
+    const FDwmDialogueSequence* Sequence = DialogueByState.Find(CurrentState);
+    if (!Sequence || Sequence->Lines.Num() == 0)
+    {
+        EndDialogue();
+        return;
+    }
+
+    // Ambient is the only state that doesn't start at line 0 -- it resumes wherever the
+    // last repeat visit left off, and shows exactly one line per visit.
+    int32 EffectiveIndex = CurrentLineIndex;
+    if (CurrentState == EDwmDialogueState::Ambient)
+    {
+        if (CurrentLineIndex > 0)
+        {
+            EndDialogue();
+            return;
+        }
+        EffectiveIndex = AmbientCursor % Sequence->Lines.Num();
+    }
+
+    if (!Sequence->Lines.IsValidIndex(EffectiveIndex))
+    {
+        EndDialogue();
+        return;
+    }
+
+    const FDwmDialogueLine& Line = Sequence->Lines[EffectiveIndex];
+    const bool bHasNext = (CurrentState == EDwmDialogueState::Approach)
+        || Sequence->Lines.IsValidIndex(EffectiveIndex + 1);
+
+    if (ActiveWidget)
+    {
+        ActiveWidget->ShowLine(Line, bHasNext);
+    }
+
+    PlayOneShot(TalkMontage, TalkAnimation);
+}
+
+void ADwmNpcActor::EndDialogue()
+{
+    if (ActiveWidget)
+    {
+        ActiveWidget->RemoveFromParent();
+        ActiveWidget = nullptr;
+    }
+    CurrentListener = nullptr;
+    CurrentLineIndex = 0;
+
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(OneShotAnimationTimer);
+    }
+
+    if (Activity == EDwmNpcActivity::Talking)
+    {
+        // Resume the interrupted trip. Re-entering the activity recomputes its waypoint,
+        // which matters if the conversation happened to start mid-walk.
+        EnterActivity(ActivityBeforeDialogue == EDwmNpcActivity::Talking
+            ? EDwmNpcActivity::IdleAtMarker
+            : ActivityBeforeDialogue);
+    }
+    else
+    {
+        RefreshLocomotionAnimation();
+    }
+}
+
+void ADwmNpcActor::UnlockFarewell()
+{
+    bFarewellUnlocked = true;
+    if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+    {
+        GameInstance->SetHankFarewellUnlocked();
+    }
+}
+
+#undef LOCTEXT_NAMESPACE

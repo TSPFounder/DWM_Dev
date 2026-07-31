@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.3",
+	"EngineAssociation": "{B0905AE2-456E-A429-7ACB-DEBB9135210D}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -11,6 +11,10 @@
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "HairStrands",
+			"Enabled": true
+		},
 		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,

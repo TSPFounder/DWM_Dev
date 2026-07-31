@@ -13,6 +13,8 @@ class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 class ADwmTradeTerminalActor;
+class ADwmInteractiveDoor;
+class ADwmNpcActor;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -70,6 +72,21 @@ public:
 	void SetActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal);
 	void ClearActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal);
 
+	/** Called by an interactive door while the player is in its interaction range. */
+	void SetActiveDoor(ADwmInteractiveDoor* Door);
+	void ClearActiveDoor(ADwmInteractiveDoor* Door);
+
+	/** Called by a nearby NPC while the player is in conversation range. */
+	void SetActiveNpc(ADwmNpcActor* Npc);
+	void ClearActiveNpc(ADwmNpcActor* Npc);
+
+	/**
+	 * Runs the primary E-key interaction. The player controller calls this instead of
+	 * handling E as terminal-only, so NPC dialogue and terminals share one deliberate
+	 * priority order without competing input bindings.
+	 */
+	void HandlePrimaryInteraction();
+
 protected:
 	/** Called for movement input */
 	void Move(const FInputActionValue& Value);
@@ -77,8 +94,8 @@ protected:
 	/** Called for looking input */
 	void Look(const FInputActionValue& Value);
 
-	/** Explicit interaction action bound to E; it never settles a trade merely by overlap. */
-	void Interact();
+	/** Door interaction bound to F, kept separate from the terminal's E interaction. */
+	void InteractWithDoor();
 
 protected:
 	// APawn interface
@@ -86,6 +103,8 @@ protected:
 	// End of APawn interface
 
 	TWeakObjectPtr<ADwmTradeTerminalActor> ActiveTradeTerminal;
+	TWeakObjectPtr<ADwmInteractiveDoor> ActiveDoor;
+	TWeakObjectPtr<ADwmNpcActor> ActiveNpc;
 
 public:
 	/** Returns Mesh1P subobject **/

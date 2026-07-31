@@ -1,11 +1,13 @@
 #include "DwmTradeTerminalActor.h"
 
 #include "DWM_DevCharacter.h"
+#include "DWM_DevPlayerController.h"
 #include "DwmGameInstance.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Engine/Engine.h"
+#include "GameFramework/Pawn.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
@@ -77,31 +79,67 @@ void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent
     AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
     bool bFromSweep, const FHitResult& SweepResult)
 {
-    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+	if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
     {
         Character->SetActiveTradeTerminal(this);
+		// The controller-level E binding can consume the key before the character's
+		// binding. Keep the controller reference synchronized with the character so
+		// either input path executes the same nearby terminal.
+		if (ADWM_DevPlayerController* Controller =
+			Cast<ADWM_DevPlayerController>(Character->GetController()))
+		{
+			Controller->SetActiveTradeTerminal(this);
+		}
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(TradePromptMessageKey, -1.0f, FColor::Yellow,
                 FString::Printf(TEXT("Press E: %s"), *BuildTradeDescription()));
-        }
-    }
+		}
+	}
+	else if (APawn* Pawn = Cast<APawn>(OtherActor))
+	{
+		if (ADWM_DevPlayerController* Controller = Cast<ADWM_DevPlayerController>(Pawn->GetController()))
+		{
+			Controller->SetActiveTradeTerminal(this);
+			if (GEngine && Pawn->IsLocallyControlled())
+			{
+				GEngine->AddOnScreenDebugMessage(TradePromptMessageKey, -1.0f, FColor::Yellow,
+					FString::Printf(TEXT("Press E: %s"), *BuildTradeDescription()));
+			}
+		}
+	}
 }
 
 void ADwmTradeTerminalActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* OverlappedComponent,
     AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+	if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
     {
         Character->ClearActiveTradeTerminal(this);
+		if (ADWM_DevPlayerController* Controller =
+			Cast<ADWM_DevPlayerController>(Character->GetController()))
+		{
+			Controller->ClearActiveTradeTerminal(this);
+		}
         if (GEngine)
         {
             GEngine->RemoveOnScreenDebugMessage(TradePromptMessageKey);
-        }
-    }
+		}
+	}
+	else if (APawn* Pawn = Cast<APawn>(OtherActor))
+	{
+		if (ADWM_DevPlayerController* Controller = Cast<ADWM_DevPlayerController>(Pawn->GetController()))
+		{
+			Controller->ClearActiveTradeTerminal(this);
+			if (GEngine && Pawn->IsLocallyControlled())
+			{
+				GEngine->RemoveOnScreenDebugMessage(TradePromptMessageKey);
+			}
+		}
+	}
 }
 
-void ADwmTradeTerminalActor::ExecuteTrade(ADWM_DevCharacter* InteractingCharacter)
+void ADwmTradeTerminalActor::ExecuteTrade(APawn* InteractingPawn)
 {
     if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
     {

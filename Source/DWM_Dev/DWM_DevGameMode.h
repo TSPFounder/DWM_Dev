@@ -13,6 +13,9 @@ class ADWM_DevGameMode : public AGameModeBase
 
 public:
 	ADWM_DevGameMode();
+
+protected:
+	virtual void BeginPlay() override;
 };
 
 

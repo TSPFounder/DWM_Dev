@@ -9,7 +9,7 @@
 #include "GameFramework/Actor.h"
 #include "DwmTradeTerminalActor.generated.h"
 
-class ADWM_DevCharacter;
+class APawn;
 class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
@@ -23,8 +23,8 @@ class DWM_DEV_API ADwmTradeTerminalActor : public AActor
 public:
     ADwmTradeTerminalActor();
 
-    /** Invoked by ADWM_DevCharacter only after the player deliberately presses E in range. */
-    void ExecuteTrade(ADWM_DevCharacter* InteractingCharacter);
+    /** Invoked only after the player deliberately presses E in range. */
+    void ExecuteTrade(APawn* InteractingPawn);
 
     // ------------------------------------------------------------------
     // Day 20: per-instance trade configuration. Set these in the Details panel for each

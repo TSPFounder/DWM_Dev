@@ -31,16 +31,28 @@ Content/Databases/
 /Content/AlpineLandscape/
 /Content/AmericanCityPacks/
 /Content/CharacterCustomizer/
+/Content/CitySampleCrowd/
 /Content/CityStreets/
 /Content/CraftingStations/
+/Content/DecalConstructor/
+/Content/Elevator_corridor/
+/Content/FactoryExteriorInteriorBundle/
+/Content/Fences/
 /Content/HQRetroFarmhouse/
 /Content/HQ_ResidentialHouse/
+/Content/LeartesStudiosOffice/
+/Content/Level_Transition/
+/Content/Lighting/
+/Content/LoftOffice/
 /Content/LookoutTower/
 /Content/ModularHouses/
 /Content/MountainGrassland/
 /Content/MountainVillageEnv/
+/Content/Office_Desk/
+/Content/Office_Vol_1/
 /Content/PhotoR_Landscape_4/
 /Content/ResidentialHouses/
+/Content/Scanned3DPeoplePack/
 /Content/SnowyPeaks/
 /Content/SteppeEnv/
 /Content/SurvivorBase/
@@ -73,3 +85,14 @@ Content/Databases/
 /Content/HQAbandonedSchool/
 /Content/ProceduralRoadGenerator/
 /Content/__ExternalActors__/PhotoR_Landscape_4/
+/Content/__ExternalActors__/LeartesStudiosOffice/
+
+# Local source/reference files supplied with recently imported Marketplace packs.
+/Source_Desk/
+/FactoryExtIntBundle.png
+/Scanned3DPeoplePack.png
+
+# Starter Content support assets copied in by imported demo projects.
+/Content/StarterContent/Props/Materials/M_MaterialSphere.uasset
+/Content/StarterContent/Props/Materials/M_MaterialSphere_Plain.uasset
+/Content/StarterContent/Props/SM_MatPreviewMesh_02.uasset
