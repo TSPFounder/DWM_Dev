@@ -96,3 +96,12 @@ Content/Databases/
 /Content/StarterContent/Props/Materials/M_MaterialSphere.uasset
 /Content/StarterContent/Props/Materials/M_MaterialSphere_Plain.uasset
 /Content/StarterContent/Props/SM_MatPreviewMesh_02.uasset
+# --- Generated model artifacts (rebuilt by the scripts; not sources) ---
+Models/**/slprj/
+Models/**/*.slx
+Models/**/*.mdl
+Models/**/*.slxc
+Models/**/*.asv
+Models/**/*.autosave
+Models/**/__pycache__/
+Models/**/*.pyc
