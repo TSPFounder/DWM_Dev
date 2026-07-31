@@ -2,6 +2,8 @@
 
 #include "DWM_DevCharacter.h"
 #include "DWM_DevProjectile.h"
+#include "DwmInteractiveDoor.h"
+#include "DwmNpcActor.h"
 #include "DwmTradeTerminalActor.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
@@ -10,6 +12,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
 #include "InputCoreTypes.h"
 #include "InputActionValue.h"
 #include "Engine/LocalPlayer.h"
@@ -67,7 +70,8 @@ void ADWM_DevCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	// EnhancedInputComponent deliberately deletes its legacy BindKey overload. Binding through
 	// the base input component keeps this temporary Day 18 interaction independent of a new
 	// Input Action asset, while the existing movement actions stay on Enhanced Input below.
-	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevCharacter::Interact);
+	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevCharacter::HandlePrimaryInteraction);
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &ADWM_DevCharacter::InteractWithDoor);
 
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
@@ -139,8 +143,83 @@ void ADWM_DevCharacter::ClearActiveTradeTerminal(ADwmTradeTerminalActor* TradeTe
 	}
 }
 
-void ADWM_DevCharacter::Interact()
+void ADWM_DevCharacter::SetActiveDoor(ADwmInteractiveDoor* Door)
 {
+	ActiveDoor = Door;
+}
+
+void ADWM_DevCharacter::ClearActiveDoor(ADwmInteractiveDoor* Door)
+{
+	if (ActiveDoor.Get() == Door)
+	{
+		ActiveDoor.Reset();
+	}
+}
+
+void ADWM_DevCharacter::SetActiveNpc(ADwmNpcActor* Npc)
+{
+	ActiveNpc = Npc;
+}
+
+void ADWM_DevCharacter::ClearActiveNpc(ADwmNpcActor* Npc)
+{
+	if (ActiveNpc.Get() == Npc)
+	{
+		ActiveNpc.Reset();
+	}
+}
+
+void ADWM_DevCharacter::HandlePrimaryInteraction()
+{
+	if (ADwmNpcActor* Npc = ActiveNpc.Get())
+	{
+		if (Npc->IsDialogueOpen())
+		{
+			Npc->AdvanceDialogue();
+			return;
+		}
+	}
+
+	// The controller owns the top-level E binding and some imported player setups do
+	// not reliably generate the NPC sphere overlap. Resolve a nearby NPC directly so
+	// dialogue remains usable even when that overlap handoff is missed. Three and a
+	// half metres is intentionally only a little larger than Hank's visible prompt
+	// radius and is too short to select him accidentally from elsewhere in Mountain.
+	if (!ActiveNpc.IsValid())
+	{
+		constexpr float NpcInteractionFallbackRadius = 350.0f;
+		const float MaxDistanceSquared = FMath::Square(NpcInteractionFallbackRadius);
+		float BestDistanceSquared = MaxDistanceSquared;
+		ADwmNpcActor* NearestNpc = nullptr;
+
+		for (TActorIterator<ADwmNpcActor> It(GetWorld()); It; ++It)
+		{
+			ADwmNpcActor* Candidate = *It;
+			const float DistanceSquared = FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation());
+			if (DistanceSquared <= BestDistanceSquared)
+			{
+				BestDistanceSquared = DistanceSquared;
+				NearestNpc = Candidate;
+			}
+		}
+
+		if (NearestNpc)
+		{
+			ActiveNpc = NearestNpc;
+			UE_LOG(LogTemplateCharacter, Log,
+				TEXT("[DWM Interaction] Resolved nearby NPC '%s' at %.0f cm after overlap handoff was missed."),
+				*GetNameSafe(NearestNpc), FMath::Sqrt(BestDistanceSquared));
+		}
+	}
+
+	// A nearby NPC wins over a terminal when both ranges overlap. This keeps E
+	// predictable beside Hank while preserving terminal interaction everywhere else.
+	if (ADwmNpcActor* Npc = ActiveNpc.Get())
+	{
+		Npc->BeginDialogue(this);
+		return;
+	}
+
 	if (ADwmTradeTerminalActor* TradeTerminal = ActiveTradeTerminal.Get())
 	{
 		// Day 20: renamed from ExecuteDemoTrade -- this terminal may now be configured with
@@ -153,6 +232,21 @@ void ADWM_DevCharacter::Interact()
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(0xD0018EULL, 2.0f, FColor::Yellow,
-			TEXT("No trade terminal in range."));
+			TEXT("Nothing to interact with."));
+	}
+}
+
+void ADWM_DevCharacter::InteractWithDoor()
+{
+	if (ADwmInteractiveDoor* Door = ActiveDoor.Get())
+	{
+		Door->ToggleDoor(this);
+		return;
+	}
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(0xD0020001ULL, 2.0f, FColor::Yellow,
+			TEXT("No door in range."));
 	}
 }

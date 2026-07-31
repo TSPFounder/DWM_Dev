@@ -1,0 +1,5 @@
+# Project-owned Unreal binary assets use Git LFS. Marketplace content is
+# excluded in .gitignore and should be installed locally through Epic/Fab.
+/Content/DWM/Maps/*.umap filter=lfs diff=lfs merge=lfs -text
+/Content/DWM/Maps/*.uasset filter=lfs diff=lfs merge=lfs -text
+/Content/DWM/Blueprints/*.uasset filter=lfs diff=lfs merge=lfs -text

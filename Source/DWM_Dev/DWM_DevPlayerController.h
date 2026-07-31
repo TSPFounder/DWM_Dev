@@ -7,6 +7,8 @@
 #include "DWM_DevPlayerController.generated.h"
 
 class UInputMappingContext;
+class ADwmInteractiveDoor;
+class ADwmTradeTerminalActor;
 
 /**
  *
@@ -22,10 +24,23 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	UInputMappingContext* InputMappingContext;
 
-	// Begin Actor interface
-protected:
+	virtual void SetupInputComponent() override;
 
 	virtual void BeginPlay() override;
 
-	// End Actor interface
+public:
+	/** Called by a DWM trade terminal when the possessed pawn enters its range. */
+	void SetActiveTradeTerminal(ADwmTradeTerminalActor* TradeTerminal);
+	void ClearActiveTradeTerminal(const ADwmTradeTerminalActor* TradeTerminal);
+
+	/** Called by a DWM door when the possessed pawn enters its range. */
+	void SetActiveDoor(ADwmInteractiveDoor* Door);
+	void ClearActiveDoor(const ADwmInteractiveDoor* Door);
+
+private:
+	void InteractWithTradeTerminal();
+	void InteractWithDoor();
+
+	TWeakObjectPtr<ADwmTradeTerminalActor> ActiveTradeTerminal;
+	TWeakObjectPtr<ADwmInteractiveDoor> ActiveDoor;
 };
