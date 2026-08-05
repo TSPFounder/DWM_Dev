@@ -97,12 +97,12 @@ CONFIG = {
     'camber_pos':          0.40,     # NACA 4-digit camber position, p
 
     # ---- Discretisation ----------------------------------------------------
-    'n_stations':          20,       # loft sections along the span
+    'n_stations':          8,       # was 20
     'n_airfoil_points':    61,       # per surface; total ~2n
     'loft_stations_only':  True,     # False = also draw every station sketch
 
     # ---- Internal structure, BOM 1110 / 1120 ------------------------------
-    'build_structure':     True,
+    'build_structure':     False,   # was True
     'spar_cap_start_frac': 0.15,     # chordwise extent of the spar caps
     'spar_cap_end_frac':   0.50,
     'spar_cap_thk_m':      0.06,
@@ -111,18 +111,18 @@ CONFIG = {
     'structure_tip_frac':  0.95,
 
     # ---- Hub, BOM 1200 -----------------------------------------------------
-    'build_hub':           True,
+    'build_hub':           False,   # was True
     'hub_envelope_dia_m':  3.4,
     'hub_flange_dia_m':    2.6,
     'hub_flange_len_m':    0.35,
 
     # ---- Spinner, BOM 1400 -------------------------------------------------
-    'build_spinner':       True,
+    'build_spinner':       False,   # was True
     'spinner_dia_m':       3.6,
     'spinner_len_m':       2.4,
 
     # ---- Root bolting, BOM 1500 -------------------------------------------
-    'build_root_bolts':    True,
+    'build_root_bolts':    False,   # was True
     'bolt_count':          24,       # representative; BOM says 80-120 per blade
     'bolt_dia_m':          0.036,    # M36
     'bolt_len_m':          0.40,
@@ -810,7 +810,10 @@ def run(context):
         design = adsk.fusion.Design.cast(app.activeProduct)
         design.designType = adsk.fusion.DesignTypes.ParametricDesignType
         root = design.rootComponent
-        root.name = 'RotorAssembly'
+        try:
+            root.name = 'RotorAssembly'
+        except Exception:
+            pass
 
         cfg = CONFIG
         add_user_parameters(design, cfg, log)

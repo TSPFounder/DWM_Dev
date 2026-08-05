@@ -17,8 +17,26 @@ function P = wtParameters()
 %% ------------------------------------------------------------------------
 %  Environment
 %  ------------------------------------------------------------------------
-P.rho        = 1.225;      % [kg/m^3]  air density, ISA sea level
+%  AIR DENSITY IS COMPUTED FROM SITE ELEVATION, NOT ASSUMED AT SEA LEVEL.
+%
+%  This was P.rho = 1.225 (ISA sea level) until 2026-08-02. That is wrong for
+%  a turbine on a MOUNTAIN, and it is wrong in a way that matters twice over:
+%
+%    1. Power is LINEAR in density -- P = 0.5*rho*A*Cp*v^3 -- so a sea-level
+%       rho overstates output at altitude. At 1200 m it is about 11% high.
+%    2. P.K_opt below is DERIVED from rho, so the region-II optimal-torque
+%       gain was mistuned for the site as well. The controller tracked the
+%       wrong torque curve, not just the power being reported wrongly.
+%
+%  ** SET THIS TO THE ACTUAL SITE ELEVATION. 1200 m IS A PLACEHOLDER. **
+P.siteElevation = 1200.0;  % [m]  ground elevation of the Mountain community
+
 P.g         = 9.80665;     % [m/s^2]
+
+%  Density is taken at the ROTOR, i.e. site elevation plus hub height. The
+%  hub height is set further down, so the arithmetic is deferred to the
+%  derived section at the end of this file -- see "Derived: air density".
+
 
 %% ------------------------------------------------------------------------
 %  Design point                        (BOM sheet "Design Point")
@@ -172,6 +190,11 @@ P.yaw = struct( ...
 %
 %      K_opt = 0.5*rho*pi*R^5*Cp_max / (lambda_opt^3 * N^3)
 %
+%% Derived: air density ----------------------------------------------------
+%  Computed here rather than at the top because it needs P.hubHeight.
+%  MUST run before K_opt below, which depends on it.
+P.rho = wtAirDensity(P.siteElevation + P.hubHeight);
+
 P.K_opt = 0.5*P.rho*pi*P.R^5*P.Cp_max / (P.lambda_opt^3 * P.N_gear^3);
 
 %% Region III -- collective pitch PI with gain scheduling ------------------
@@ -202,4 +225,56 @@ P.sim = struct( ...
     'solver',     'ode23tb');  % stiff: the drivetrain torsional mode is fast
                                % relative to the rotor and tower modes
 
+end
+
+
+% =========================================================================
+function rho = wtAirDensity(altitude)
+%WTAIRDENSITY  ISA air density at a geometric altitude, in kg/m^3.
+%
+%   Uses ATMOSCOESA from the Aerospace Toolbox when it is licensed, and falls
+%   back to the closed-form ISA troposphere relation otherwise.
+%
+%   WHY A FALLBACK RATHER THAN JUST REQUIRING THE TOOLBOX
+%   ----------------------------------------------------
+%   This model ships in the MVP demo download. Most people who run it will
+%   not have the Aerospace Toolbox, and a hard dependency would turn a
+%   correctness fix into a licence error on someone else's machine. The
+%   fallback is exact for the troposphere, so nothing is lost by it.
+%
+%   ISA troposphere, valid to 11 km:
+%       T   = T0 - L*h
+%       rho = rho0 * (T/T0)^(g/(L*R) - 1)
+%   with the exponent working out at 4.25588.
+
+useToolbox = false;
+try
+    % LICENSE returns false rather than erroring when the product is absent;
+    % EXIST guards the case where the licence exists but the files do not.
+    useToolbox = license('test', 'Aerospace_Toolbox') && (exist('atmoscoesa', 'file') == 2);
+catch
+    useToolbox = false;
+end
+
+if useToolbox
+    try
+        [~, ~, ~, rho] = atmoscoesa(altitude);
+        return
+    catch
+        % Fall through to the closed form rather than failing the whole run.
+    end
+end
+
+T0   = 288.15;      % [K]      ISA sea-level temperature
+L    = 0.0065;      % [K/m]    tropospheric lapse rate
+rho0 = 1.225;       % [kg/m^3] ISA sea-level density
+
+if altitude > 11000
+    warning('wtAirDensity:aboveTroposphere', ...
+        ['Altitude %.0f m is above the 11 km troposphere limit of this ' ...
+         'relation. Clamping to 11 km.'], altitude);
+    altitude = 11000;
+end
+
+rho = rho0 * (1 - L*altitude/T0)^4.25588;
 end
