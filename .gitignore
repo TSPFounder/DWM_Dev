@@ -105,3 +105,8 @@ Models/**/*.asv
 Models/**/*.autosave
 Models/**/__pycache__/
 Models/**/*.pyc
+
+# Marketplace / Fab asset packs. Large binary content, re-downloadable from the
+# Epic account that holds the licence, and not project source.
+/Content/FarmAnimalsPack/
+/Content/HQ_RetroSchoolBus/
