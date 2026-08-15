@@ -32,12 +32,14 @@ Content/Databases/
 /Content/AmericanCityPacks/
 /Content/CharacterCustomizer/
 /Content/CitySampleCrowd/
+/Content/CitySampleVehicles/
 /Content/CityStreets/
 /Content/CraftingStations/
 /Content/DecalConstructor/
 /Content/Elevator_corridor/
 /Content/FactoryExteriorInteriorBundle/
 /Content/Fences/
+/Content/HouseholdProps/
 /Content/HQRetroFarmhouse/
 /Content/HQ_ResidentialHouse/
 /Content/LeartesStudiosOffice/
@@ -68,6 +70,7 @@ Content/Databases/
 /Content/TreePackSpruce/
 /Content/TreePackWillow/
 /Content/UltraDynamicSky/
+/Content/Velocity_Cars_Pack/
 /Content/VillageHouse/
 /Content/VillageHousePack_v1/
 /Content/Wind_Turbine/
