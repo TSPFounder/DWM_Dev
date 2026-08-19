@@ -1,4 +1,4 @@
-function out = wtRunSimulation(scenario)
+function out = wtRunSimulation(scenario, P, AT)
 %WTRUNSIMULATION  Build, run and plot the 3 MW wind turbine model.
 %
 %   OUT = WTRUNSIMULATION()             runs the default wind-ramp scenario.
@@ -6,6 +6,28 @@ function out = wtRunSimulation(scenario)
 %   OUT = WTRUNSIMULATION('ramp')       slow ramp through both regions.
 %   OUT = WTRUNSIMULATION('turbulent')  synthetic turbulent series.
 %   OUT = WTRUNSIMULATION('gust')       IEC-style extreme operating gust.
+%
+%   OUT = WTRUNSIMULATION(SCENARIO, P) runs with a supplied parameter struct
+%   instead of the WTPARAMETERS defaults, and regenerates the aerodynamic
+%   tables from it. OUT = WTRUNSIMULATION(SCENARIO, P, AT) supplies both.
+%   Same argument order and same omit-or-empty rules as WTBUILDMODEL.
+%
+%   THIS IS HOW A START-FROM-STANDSTILL RUN IS REQUESTED, and the reason the
+%   argument exists: the supervisor's two parameters have to be changed
+%   together, and editing defaults in WTPARAMETERS to do it means the file
+%   on disk no longer describes the machine while the edit is in place.
+%
+%       P = wtParameters();
+%       P.omega_rInit = 0;      % rotor stopped at t = 0
+%       P.sup.t_start = 30;     % held parked this long, then released
+%       out = wtRunSimulation('ramp', P);
+%
+%   PASSING AT SEPARATELY IS FOR REUSING TABLES ACROSS RUNS, NOT FOR MIXING.
+%   Nothing checks that a supplied AT was generated from the supplied P, and
+%   a mismatched pair fails silently: the control loops would be tuned to one
+%   rotor and the aerodynamics evaluated for another, producing a run that
+%   converges and means nothing. Supply both only when they came from the
+%   same P.
 %
 %   Returns a struct of named, unit-tagged time series -- not a raw matrix,
 %   so a downstream script cannot silently index the wrong column.
@@ -44,8 +66,11 @@ if nargin < 1 || isempty(scenario), scenario = 'ramp'; end
 %% ------------------------------------------------------------------------
 %  Parameters and tables
 %  ------------------------------------------------------------------------
-P  = wtParameters();
-AT = wtGenerateAeroTables(P);
+% AT is derived from P, so a caller who overrides P without overriding AT
+% gets tables regenerated from THEIR P -- not the defaults. Guarding these
+% separately rather than as one block is what makes that work.
+if nargin < 2 || isempty(P),  P  = wtParameters();         end
+if nargin < 3 || isempty(AT), AT = wtGenerateAeroTables(P); end
 
 fprintf('\n=== Derived dynamics (all traced to BOM values) ===\n');
 fprintf('  Rotor inertia      J_r     = %10.3e kg m^2\n', P.J_rotor);
@@ -187,7 +212,7 @@ end
 Y   = simLog.signals.values;
 tt  = simLog.time;
 
-nExpected = 12;
+nExpected = 13;
 assert(size(Y,2) == nExpected, 'wtRunSimulation:logWidth', ...
     ['Logged %d channels, expected %d. The LogMux wiring in wtBuildModel ' ...
      'and the unpacking in wtRunSimulation have drifted apart.'], ...
@@ -206,6 +231,7 @@ out.Cp       = Y(:,9);    out.units.Cp      = '-';
 out.lambda   = Y(:,10);   out.units.lambda  = '-';
 out.F_thrust = Y(:,11);   out.units.F_thrust= 'N';
 out.yawError = Y(:,12);   out.units.yawError= 'rad';
+out.state    = Y(:,13);   out.units.state   = '-';   % 0 parked 1 startup 2 generating
 out.v_wind   = interp1(t, v, tt);
 out.P        = P;
 

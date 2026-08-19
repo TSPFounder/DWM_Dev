@@ -216,6 +216,64 @@ P.sup = struct( ...
     'v_cutIn',       P.v_cutIn, ...
     'v_cutOut',      P.v_cutOut);
 
+%% Start-up sequencing ----------------------------------------------------
+%  Consumed by WTBUILDSUPERVISOR. Everything above describes a turbine that
+%  is already running; these describe getting it there from standstill.
+%
+%  BETA_START is DERIVED, not chosen for looks. Between standstill and
+%  cut-in the rotor sweeps the whole low tip-speed-ratio range, so the
+%  useful pitch is the one maximising the WORST torque coefficient
+%  Cq = Cp/lambda encountered on the way up, not the best one at any single
+%  lambda. Scanning WTCP over beta = 0..90 deg against lambda = 0.1..2.5
+%  puts that maximin at 31 deg (min Cq = 0.0248, against 0.0068 at fine
+%  pitch -- a factor of 3.6 in starting torque).
+%
+%  HONESTY NOTE, and it belongs next to the number rather than in a report:
+%  at low lambda the exponential term of the Heier fit has collapsed and
+%  nearly all of this torque comes from its linear c6*lambda correction.
+%  The SHAPE is right -- feather brakes, intermediate pitch starts, fine
+%  pitch runs -- and the sequence is physically the one a real turbine uses.
+%  The starting-torque MAGNITUDE rests on a curve-fitting artefact, and
+%  WTCP already warns it is a generic utility-scale fit rather than BEM data
+%  for this blade. Adequate for sequencing; not a claim about this rotor.
+P.sup.beta_park  = P.pitch.betaMax;        % [rad] feathered, Cq < 0 at low lambda
+P.sup.beta_start = (31*pi/180);            % [rad] see derivation above
+
+%  T_START = 0 IS THE BACKWARD-COMPATIBLE DEFAULT AND MUST STAY THAT WAY.
+%  At 0 the start command is already true when the simulation begins, so a
+%  model initialised at or above cut-in latches into GENERATING on the first
+%  step and the supervisor is pure feedthrough from then on -- byte-identical
+%  to the pre-supervisor model. Any non-zero value holds the machine PARKED
+%  (feathered, zero torque) until that time, which is correct for a start
+%  from standstill and WRONG for every scenario that predates this file:
+%  it would feather a running turbine for t_start seconds and call it a
+%  fresh result.
+P.sup.t_start    = 0;                      % [s]   see above before changing
+
+%  Cut-in detection is a relay, so it needs two thresholds. The drop-out is
+%  10 % below pick-up: enough hysteresis that a torque dip just after cut-in
+%  cannot chatter the state, small enough that a genuine stall still exits.
+P.sup.omega_gOn  = P.omega_rMin*P.N_gear;       % [rad/s] STARTUP -> GENERATING
+P.sup.omega_gOff = 0.90*P.omega_rMin*P.N_gear;  % [rad/s] drop-out
+
+%% Rotor speed initial condition ------------------------------------------
+%  The drivetrain integrators start here. Defaults to the cut-in floor,
+%  which is what every scenario predating the supervisor assumed and is
+%  therefore what keeps their results reproducible. Set it to 0 to simulate
+%  a genuine start from standstill; the supervisor then carries the rotor up
+%  to cut-in before the Region II law is given anything to do.
+%
+%  A STANDSTILL START NEEDS BOTH THIS AND P.sup.t_start, set together:
+%      P.omega_rInit  = 0;    % rotor stopped at t = 0
+%      P.sup.t_start  = 30;   % how long it stays stopped before the command
+%  Setting only one of them is a configuration that means nothing physical --
+%  a stopped rotor with t_start = 0 starts instantly, and a running rotor
+%  with t_start > 0 gets feathered mid-run. They are deliberately left as two
+%  explicit parameters rather than inferred from each other, because guessing
+%  the operator's intent from an initial condition is how a scenario silently
+%  becomes a different scenario.
+P.omega_rInit = P.omega_rMin;              % [rad/s]
+
 %% ------------------------------------------------------------------------
 %  Simulation defaults
 %  ------------------------------------------------------------------------

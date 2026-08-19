@@ -5,7 +5,7 @@ function modelName = wtBuildModel(modelName, P, AT)
 %   MODELNAME = WTBUILDMODEL(NAME, P, AT) builds it under a given name with a
 %   supplied parameter struct and aerodynamic tables.
 %
-%   The model is assembled from six subsystems, each built by its own
+%   The model is assembled from eight subsystems, each built by its own
 %   function so that a change to one component's physics touches one file:
 %
 %       RotorAero        wtBuildRotorAero          BOM 1000
@@ -15,6 +15,7 @@ function modelName = wtBuildModel(modelName, P, AT)
 %       TowerDynamics    wtBuildTowerDynamics      BOM 4100-4130
 %       YawSystem        wtBuildYawSystem          BOM 3100-3300
 %       Controller       wtBuildController         BOM 7100-7250
+%       Supervisor       wtBuildSupervisor         BOM 7100 (supervisory)
 %
 %   TOP-LEVEL SIGNAL FLOW
 %   ---------------------
@@ -28,7 +29,7 @@ function modelName = wtBuildModel(modelName, P, AT)
 %             +--F_thrust--> [Tower]  |                        v
 %                               |     +----T_gen----- [GenConverter]
 %                             xdot_t
-%             beta <-- [PitchActuator] <--beta_cmd-- [Controller]
+%             beta <-- [PitchActuator] <--beta_cmd-- [Supervisor] <-- [Controller]
 %
 %   THE TWO FEEDBACK PATHS WORTH NOTING
 %   -----------------------------------
@@ -40,6 +41,15 @@ function modelName = wtBuildModel(modelName, P, AT)
 %
 %   No algebraic loops exist: every feedback path passes through an
 %   integrator (drivetrain, tower) or a first-order lag (pitch, converter).
+%
+%   THE SUPERVISOR SITS BETWEEN THE CONTROLLER AND THE PLANT
+%   --------------------------------------------------------
+%   Both controller outputs are routed through Supervisor before they reach
+%   GenConverter and PitchActuator, so the flow drawn above is the
+%   GENERATING state. In Parked and Startup the supervisor overrides both
+%   demands and the Controller drives nothing. This adds no algebraic loop:
+%   the supervisor is pure feedthrough gating, and every path into it
+%   already passes through an integrator or a lag.
 %
 %   See also WTPARAMETERS, WTGENERATEAEROTABLES, WTRUNSIMULATION.
 
@@ -112,7 +122,8 @@ subs = { ...
     'Controller',    [640 420 780 540], @wtBuildController
     'PitchActuator', [420 420 560 500], @wtBuildPitchActuator
     'TowerDynamics', [420 240 560 330], @wtBuildTowerDynamics
-    'YawSystem',     [180 560 320 650], @wtBuildYawSystem};
+    'YawSystem',     [180 560 320 650], @wtBuildYawSystem
+    'Supervisor',    [860 420 1000 540], @wtBuildSupervisor};
 
 for k = 1:size(subs,1)
     name    = subs{k,1};
@@ -152,7 +163,7 @@ wtAdd('simulink/Math Operations/Sum', [modelName '/RelativeWind'], [310 120], ..
 % documented here AND asserted in wtRunSimulation, so a future edit that
 % inserts a channel cannot silently mislabel every plot.
 wtAdd('simulink/Signal Routing/Mux', [modelName '/LogMux'], [1120 100 1130 640], ...
-    'Inputs','12', 'DisplayOption','bar');
+    'Inputs','13', 'DisplayOption','bar');
 
 wtAdd('simulink/Sinks/To Workspace', [modelName '/LogOut'], [1200 350], ...
     'VariableName','wtLog', ...
@@ -181,14 +192,22 @@ wtLine(modelName, { ...
     'GenConverter/1',   'Drivetrain/2'
 
     % --- electrical ---
-    'Controller/1',     'GenConverter/1'
+    'Supervisor/1',     'GenConverter/1'
     'Drivetrain/2',     'GenConverter/2'
 
     % --- control ---
     'Drivetrain/2',     'Controller/1'
     'WindSpeed/1',      'Controller/2'
     'PitchActuator/1',  'Controller/3'
-    'Controller/2',     'PitchActuator/1'
+    'Supervisor/2',     'PitchActuator/1'
+
+    % --- supervisory gating ---
+    % The Controller no longer reaches the plant directly. Parked and
+    % Startup override both demands; Generating passes them through
+    % untouched. See wtBuildSupervisor.
+    'Drivetrain/2',     'Supervisor/1'
+    'Controller/1',     'Supervisor/2'
+    'Controller/2',     'Supervisor/3'
 
     % --- logging (channel order must match wtRunSimulation) ---
     'RelativeWind/1',   'LogMux/1'      % 1  v_rel     [m/s]
@@ -203,6 +222,7 @@ wtLine(modelName, { ...
     'RotorAero/4',      'LogMux/10'     % 10 lambda    [-]
     'RotorAero/2',      'LogMux/11'     % 11 F_thrust  [N]
     'YawSystem/2',      'LogMux/12'     % 12 yawError  [rad]
+    'Supervisor/3',     'LogMux/13'     % 13 state     [-] 0/1/2
     'LogMux/1',         'LogOut/1'});
 
 %% ------------------------------------------------------------------------

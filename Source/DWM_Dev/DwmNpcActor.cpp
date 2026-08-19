@@ -5,6 +5,7 @@
 #include "DwmNpcActor.h"
 
 #include "DWM_DevCharacter.h"
+#include "DWM_DevPlayerController.h"
 #include "DwmDialogueWidget.h"
 #include "DwmGameInstance.h"
 #include "Animation/AnimInstance.h"
@@ -16,6 +17,7 @@
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -105,6 +107,60 @@ ADwmNpcActor::ADwmNpcActor()
     DialogueWidgetClass = UDwmDialogueWidget::StaticClass();
 
     PopulateDefaultHankDialogue();
+}
+
+void ADwmNpcActor::ConfigureProfileFromSource(EDwmNpcProfile NewProfile,
+    USkeletalMeshComponent* SourceMesh)
+{
+    NpcProfile = NewProfile;
+
+    if (SourceMesh && NpcMesh)
+    {
+        NpcMesh->SetSkeletalMesh(SourceMesh->GetSkeletalMeshAsset());
+        // The placed source people use their skeletal mesh as the actor root, so that
+        // component's relative transform is already its saved world transform. The NPC
+        // actor is spawned at that world transform; copying it here would apply it twice.
+        NpcMesh->SetRelativeTransform(FTransform::Identity);
+        NpcMesh->SetAnimInstanceClass(nullptr);
+
+        for (int32 MaterialIndex = 0; MaterialIndex < SourceMesh->GetNumMaterials(); ++MaterialIndex)
+        {
+            NpcMesh->SetMaterial(MaterialIndex, SourceMesh->GetMaterial(MaterialIndex));
+        }
+    }
+
+    DialogueByState.Empty();
+    RequiredSellerCommunityIds.Empty();
+    BuyerCommunityId.Reset();
+    bEnableScriptedMovement = false;
+    bSnapToGround = false;
+    TurbineActor = nullptr;
+    WalkAnimation = nullptr;
+    TurnLeftAnimation = nullptr;
+    TurnRightAnimation = nullptr;
+    GestureAtTurbineAnimation = nullptr;
+    GestureAtTurbineMontage = nullptr;
+    TalkAnimation = nullptr;
+    TalkMontage = nullptr;
+    InteractionSphere->SetSphereRadius(250.0f);
+
+    IdleAnimation = LoadObject<UAnimSequence>(nullptr,
+        TEXT("/Game/Scanned3DPeoplePack/RP_Character/00_Animations/"
+             "rp_sophia_animated_003_idling_ue4.rp_sophia_animated_003_idling_ue4"));
+
+    PopulateHillsideDialogue();
+}
+
+void ADwmNpcActor::ConfigureDialogueProxy(EDwmNpcProfile NewProfile)
+{
+    ConfigureProfileFromSource(NewProfile, nullptr);
+
+    if (NpcMesh)
+    {
+        NpcMesh->SetVisibility(false, true);
+        NpcMesh->SetHiddenInGame(true, true);
+        NpcMesh->SetComponentTickEnabled(false);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +263,232 @@ void ADwmNpcActor::PopulateDefaultHankDialogue()
     }
 }
 
+void ADwmNpcActor::PopulateHillsideDialogue()
+{
+    auto MakeLine = [](const FText& Speaker, const FText& Body, const FText& Prompt)
+    {
+        FDwmDialogueLine Line;
+        Line.Speaker = Speaker;
+        Line.Body = Body;
+        Line.AdvancePrompt = Prompt;
+        return Line;
+    };
+
+    FDwmDialogueSequence Approach;
+    FDwmDialogueSequence Details;
+    FDwmDialogueSequence Ambient;
+
+    switch (NpcProfile)
+    {
+    case EDwmNpcProfile::Sophia:
+    {
+        DisplayName = LOCTEXT("SophiaName", "Sophia");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaApproach",
+                "So that's the turbine that came with your land. Ambitious purchase \u2014 nobody's "
+                "touched that thing in years. Good news is, my two here already worked up what you "
+                "need to bring it back."),
+            LOCTEXT("SophiaPrompt", "What exactly did you put together?")));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaDetails",
+                "Full CAD drawings of the mount and rotor assembly, plus a Simulink model of how it "
+                "should actually behave once it's running. Owen did the drawings, Nathan built the "
+                "model. Between the two, whoever's doing the repair up there won't be guessing."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaTrade",
+                "Here's everything \u2014 drawings and model both. Take care of it; that's real "
+                "engineering hours in your hands, not just a sketch on a napkin."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaFarewell",
+                "Good luck up there. Come back through when it's spinning \u2014 I'd like to see it."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaAmbient1",
+                "Old sawmill building still stands out back \u2014 not running these days, but I like "
+                "the space. Good light for drafting."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaAmbient2",
+                "Got solar on the roof now, battery bank right beside it. Doesn't run much, but it "
+                "keeps the lights on through a cloudy week while these two are hunched over a screen."),
+            FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::Owen:
+    {
+        DisplayName = LOCTEXT("OwenName", "Owen");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("OwenApproach",
+                "I pulled the mount and rotor assembly apart in CAD, piece by piece. Whoever repairs "
+                "that thing won't have to reverse-engineer it in the field \u2014 every bracket, every "
+                "bolt pattern, it's all there."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("OwenAmbient1",
+                "Hardest part wasn't the rotor \u2014 it was the mount. Whoever built that turbine "
+                "originally didn't leave much documentation. Had to measure half of it by hand from "
+                "photos."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("OwenAmbient2",
+                "If the repair crew finds something in the field that doesn't match my drawings, tell "
+                "them to trust what they're looking at, not the paper. Old hardware doesn't always "
+                "match what was on file."), FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::Nathan:
+    {
+        DisplayName = LOCTEXT("NathanName", "Nathan");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("NathanApproach",
+                "Owen's drawings tell you what the turbine looks like. My model tells you how it's "
+                "supposed to behave once it's spinning again \u2014 load, response, where it'll struggle. "
+                "Saves you finding out the hard way."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("NathanAmbient1",
+                "Model's only as good as what we know about that specific turbine. I built it off "
+                "Owen's CAD data and some reasonable assumptions \u2014 real sensor data once it's running "
+                "would tighten it up, but it'll get you started."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("NathanAmbient2",
+                "Half my job is knowing when the simple model is good enough and when it isn't. For a "
+                "first repair pass, simple's fine."), FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::Maria:
+    {
+        DisplayName = LOCTEXT("MariaName", "Maria");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaApproach",
+                "The Valley can support the Mountain crews. We have grain in bulk, plus corn, "
+                "vegetables, and fruit from a strong season. That will keep people fed while "
+                "they bring the turbine back."),
+            LOCTEXT("MariaPrompt", "How would the supply agreement work?")));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaDetails",
+                "We'll keep the formal ledger simple: Valley grain for Mountain stone. The corn, "
+                "vegetables, and fruit go into the crew meals around that exchange, and when the "
+                "season permits we can add honey and meat. Fair weights on both sides, written down."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaTrade",
+                "Tell Hank the first grain shipment is ready. Valley will keep the food moving as "
+                "long as Mountain keeps the stone moving."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaFarewell",
+                "And tell Hank I said good luck. He still owes me for last winter."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaAmbient1",
+                "Corn and vegetables move quickly. Grain is what lets us promise support through "
+                "the whole repair instead of only the first week."), FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaAmbient2",
+                "A fair ledger matters. If every community can see what came in and what went out, "
+                "people keep trading even after the emergency is over."), FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::DeShawn:
+    {
+        DisplayName = LOCTEXT("DeShawnName", "DeShawn");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("DeShawnApproach",
+                "The Suburbs can put people on the Mountain repair: riggers, builders, and the steady "
+                "hands who know how to work safely around heavy parts."),
+            LOCTEXT("DeShawnPrompt", "What do the crews need?")));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("DeShawnDetails",
+                "Maria's food keeps the crews moving, and the City can turn scrap and plans into "
+                "parts. My job is making sure people, tools, and transport show up in the same place "
+                "on the same day."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("DeShawnTrade",
+                "Tell Hank the crew is ready once the parts and food are lined up. We can move fast, "
+                "but not messy."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("DeShawnAmbient1",
+                "A repair is logistics before it is heroics: people, food, transport, tools, and "
+                "someone keeping the list honest."),
+            FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::Mike:
+    {
+        DisplayName = LOCTEXT("MikeName", "Mike");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MikeApproach",
+                "I have Owen's CAD drawings for the mount and rotor assembly. Good drawings mean I can "
+                "quote real machining time instead of guessing with a tape measure."),
+            LOCTEXT("MikePrompt", "What can the City build?")));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MikeDetails",
+                "This batch of replacement parts will hold. Long term, though, every custom part on "
+                "those drawings is one-at-a-time work unless the communities invest in better tooling."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MikeTrade",
+                "Take this number back with Sophia's design hours. Hank needs both halves before he "
+                "chooses the repair plan."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MikeAmbient1",
+                "Kai is upstairs over the shop floor. He has Nathan's control model turning into code "
+                "while I keep the metal honest."),
+            FText::GetEmpty()));
+        break;
+    }
+
+    case EDwmNpcProfile::Kai:
+    {
+        DisplayName = LOCTEXT("KaiName", "Kai");
+        const FText Speaker = DisplayName;
+        Approach.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("KaiApproach",
+                "Nathan's Simulink model gave me the behavior target. I turned that into controller "
+                "code and a Fusion enclosure layout so the turbine can monitor wind speed, load, and "
+                "response."),
+            LOCTEXT("KaiPrompt", "How does that help the repair?")));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("KaiDetails",
+                "Software is cheaper than a broken rotor, but it still needs fittings, wiring, and "
+                "maintenance. Tell Hank the controller is part of the repair, not a decoration."),
+            FText::GetEmpty()));
+        Ambient.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("KaiAmbient1",
+                "Mike can machine a beautiful part. My job is making sure the turbine does not destroy "
+                "that beautiful part on day one."),
+            FText::GetEmpty()));
+        break;
+    }
+
+    default:
+        return;
+    }
+
+    DialogueByState.Add(EDwmDialogueState::Approach, Approach);
+    if (Details.Lines.Num() > 0)
+    {
+        DialogueByState.Add(EDwmDialogueState::QuestDetails, Details);
+    }
+    if (Ambient.Lines.Num() > 0)
+    {
+        DialogueByState.Add(EDwmDialogueState::Ambient, Ambient);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -226,12 +508,15 @@ void ADwmNpcActor::BeginPlay()
 
     // OpenLevel destroys this actor, but the GameInstance survives. Restore Hank's
     // conversation progress so returning from another community is actually a return visit.
-    if (const UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+    if (IsHankProfile())
     {
-        bHasDeliveredOpening = GameInstance->HasDeliveredHankOpening();
-        bFarewellUnlocked = GameInstance->IsHankFarewellUnlocked();
-        ReturnVisitCount = GameInstance->GetHankReturnVisitCount();
-        AmbientCursor = GameInstance->GetHankAmbientCursor();
+        if (const UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+        {
+            bHasDeliveredOpening = GameInstance->HasDeliveredHankOpening();
+            bFarewellUnlocked = GameInstance->IsHankFarewellUnlocked();
+            ReturnVisitCount = GameInstance->GetHankReturnVisitCount();
+            AmbientCursor = GameInstance->GetHankAmbientCursor();
+        }
     }
 
     // Which animation path applies is decided by what's actually on the mesh, not by a
@@ -676,9 +961,21 @@ void ADwmNpcActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* Overlapp
     AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
     bool bFromSweep, const FHitResult& SweepResult)
 {
-    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+    if (APawn* Pawn = Cast<APawn>(OtherActor))
     {
-        Character->SetActiveNpc(this);
+        if (!Pawn->IsLocallyControlled())
+        {
+            return;
+        }
+
+        if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(Pawn))
+        {
+            Character->SetActiveNpc(this);
+        }
+        else if (ADWM_DevPlayerController* Controller = Cast<ADWM_DevPlayerController>(Pawn->GetController()))
+        {
+            Controller->SetActiveNpc(this);
+        }
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(NpcPromptMessageKey, -1.0f, FColor::White,
@@ -690,15 +987,22 @@ void ADwmNpcActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* Overlapp
 void ADwmNpcActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* OverlappedComponent,
     AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-    if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(OtherActor))
+    if (APawn* Pawn = Cast<APawn>(OtherActor))
     {
         // Walking away closes the panel -- otherwise it would hang on screen with no way
         // to advance it, since E would no longer route back to this NPC.
-        if (CurrentListener == Character)
+        if (CurrentListener == Pawn)
         {
             EndDialogue();
         }
-        Character->ClearActiveNpc(this);
+        if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(Pawn))
+        {
+            Character->ClearActiveNpc(this);
+        }
+        else if (ADWM_DevPlayerController* Controller = Cast<ADWM_DevPlayerController>(Pawn->GetController()))
+        {
+            Controller->ClearActiveNpc(this);
+        }
         if (GEngine)
         {
             GEngine->RemoveOnScreenDebugMessage(NpcPromptMessageKey);
@@ -712,6 +1016,19 @@ void ADwmNpcActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* Overlapped
 
 EDwmDialogueState ADwmNpcActor::SelectStateForThisInteraction() const
 {
+    if (!IsHankProfile())
+    {
+        if (!bHasDeliveredOpening)
+        {
+            return EDwmDialogueState::Approach;
+        }
+
+        const FDwmDialogueSequence* AmbientSequence = DialogueByState.Find(EDwmDialogueState::Ambient);
+        return (AmbientSequence && AmbientSequence->Lines.Num() > 0)
+            ? EDwmDialogueState::Ambient
+            : EDwmDialogueState::Approach;
+    }
+
     // Act 3 payoff wins outright once the turbine beat has fired.
     if (bFarewellUnlocked)
     {
@@ -763,9 +1080,9 @@ EDwmDialogueState ADwmNpcActor::SelectStateForThisInteraction() const
 // Dialogue flow
 // ---------------------------------------------------------------------------
 
-void ADwmNpcActor::BeginDialogue(ADWM_DevCharacter* InteractingCharacter)
+void ADwmNpcActor::BeginDialogue(APawn* InteractingPawn)
 {
-    if (IsDialogueOpen() || !InteractingCharacter)
+    if (IsDialogueOpen() || !InteractingPawn)
     {
         return;
     }
@@ -778,7 +1095,7 @@ void ADwmNpcActor::BeginDialogue(ADWM_DevCharacter* InteractingCharacter)
         return;
     }
 
-    APlayerController* PlayerController = Cast<APlayerController>(InteractingCharacter->GetController());
+    APlayerController* PlayerController = Cast<APlayerController>(InteractingPawn->GetController());
     if (!PlayerController)
     {
         return;
@@ -790,11 +1107,11 @@ void ADwmNpcActor::BeginDialogue(ADWM_DevCharacter* InteractingCharacter)
         return;
     }
 
-    CurrentListener = InteractingCharacter;
+    CurrentListener = InteractingPawn;
     CurrentState = SelectStateForThisInteraction();
     CurrentLineIndex = 0;
 
-    if (CurrentState != EDwmDialogueState::Approach)
+    if (IsHankProfile() && CurrentState != EDwmDialogueState::Approach)
     {
         ++ReturnVisitCount;
         if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
@@ -837,9 +1154,17 @@ void ADwmNpcActor::AdvanceDialogue()
     // closing the panel.
     if (CurrentState == EDwmDialogueState::Approach)
     {
-        CurrentState = EDwmDialogueState::QuestDetails;
-        CurrentLineIndex = 0;
-        ShowCurrentLine();
+        const FDwmDialogueSequence* Details = DialogueByState.Find(EDwmDialogueState::QuestDetails);
+        if (Details && Details->Lines.Num() > 0)
+        {
+            CurrentState = EDwmDialogueState::QuestDetails;
+            CurrentLineIndex = 0;
+            ShowCurrentLine();
+            return;
+        }
+
+        bHasDeliveredOpening = true;
+        EndDialogue();
         return;
     }
 
@@ -847,9 +1172,12 @@ void ADwmNpcActor::AdvanceDialogue()
     {
         // The opening brief is done; every later visit uses the return-visit states.
         bHasDeliveredOpening = true;
-        if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+        if (IsHankProfile())
         {
-            GameInstance->MarkHankOpeningDelivered();
+            if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+            {
+                GameInstance->MarkHankOpeningDelivered();
+            }
         }
     }
 
@@ -860,10 +1188,38 @@ void ADwmNpcActor::AdvanceDialogue()
         if (AmbientSequence && AmbientSequence->Lines.Num() > 0)
         {
             AmbientCursor = (AmbientCursor + 1) % AmbientSequence->Lines.Num();
+            if (IsHankProfile())
+            {
+                if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+                {
+                    GameInstance->SetHankAmbientCursor(AmbientCursor);
+                }
+            }
+        }
+    }
+
+    if (CurrentState == EDwmDialogueState::ReturnAllTradesComplete)
+    {
+        // THE ACT 3 TRIGGER. Fires here -- when the player has read all the way through
+        // the all-trades-complete conversation and clicked past its last line -- and
+        // nowhere else. Deliberately NOT the moment the last trade lands (that is
+        // DwmGameInstance's own bookkeeping, with no idea a conversation is even
+        // happening) and NOT on arrival at Mountain (the player would see it start
+        // without Hank having said anything). Walking away mid-conversation does not
+        // reach this branch either: OnInteractionSphereEndOverlap calls EndDialogue()
+        // directly, never AdvanceDialogue(), so leaving early cannot trigger the payoff.
+        //
+        // The two calls are paired at this one site rather than left for either to infer
+        // the other from trade state, matching UnlockFarewell's own header comment ("call
+        // this from whatever drives the turbine payoff") -- so the Farewell line can
+        // never appear before the turbine has actually begun turning.
+        if (IsHankProfile())
+        {
             if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
             {
-                GameInstance->SetHankAmbientCursor(AmbientCursor);
+                GameInstance->StartTurbineActThreePayoff();
             }
+            UnlockFarewell();
         }
     }
 
@@ -899,8 +1255,10 @@ void ADwmNpcActor::ShowCurrentLine()
     }
 
     const FDwmDialogueLine& Line = Sequence->Lines[EffectiveIndex];
-    const bool bHasNext = (CurrentState == EDwmDialogueState::Approach)
-        || Sequence->Lines.IsValidIndex(EffectiveIndex + 1);
+    const FDwmDialogueSequence* Details = DialogueByState.Find(EDwmDialogueState::QuestDetails);
+    const bool bApproachChains = CurrentState == EDwmDialogueState::Approach
+        && Details && Details->Lines.Num() > 0;
+    const bool bHasNext = bApproachChains || Sequence->Lines.IsValidIndex(EffectiveIndex + 1);
 
     if (ActiveWidget)
     {
@@ -937,14 +1295,22 @@ void ADwmNpcActor::EndDialogue()
     {
         RefreshLocomotionAnimation();
     }
+
+    if (!bEnableScriptedMovement)
+    {
+        SetActorRotation(HomeRotation);
+    }
 }
 
 void ADwmNpcActor::UnlockFarewell()
 {
     bFarewellUnlocked = true;
-    if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+    if (IsHankProfile())
     {
-        GameInstance->SetHankFarewellUnlocked();
+        if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
+        {
+            GameInstance->SetHankFarewellUnlocked();
+        }
     }
 }
 

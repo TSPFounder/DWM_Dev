@@ -45,7 +45,7 @@ wtAdd('simulink/Math Operations/Gain', [sys '/invJr'], [250 100], ...
     'Gain','1/P.J_rotor');
 
 wtAdd('simulink/Continuous/Integrator', [sys '/omega_r_int'], [340 100], ...
-    'InitialCondition','P.omega_rMin');
+    'InitialCondition','P.omega_rInit');
 
 %% Generator inertia -------------------------------------------------------
 wtAdd('simulink/Math Operations/Sum', [sys '/SumGen'], [160 480], ...
@@ -55,7 +55,7 @@ wtAdd('simulink/Math Operations/Gain', [sys '/invJg'], [250 480], ...
     'Gain','1/P.J_gen');
 
 wtAdd('simulink/Continuous/Integrator', [sys '/omega_g_int'], [340 480], ...
-    'InitialCondition','P.omega_rMin*P.N_gear');
+    'InitialCondition','P.omega_rInit*P.N_gear');
 
 %% Shaft torsion -----------------------------------------------------------
 % omega_g referred to the low-speed side.

@@ -17,6 +17,7 @@ class UStaticMesh;
 class UUserWidget;
 class AActor;
 class UScriptStruct;
+class ADwmPendulumActor;
 
 /** A world-independent copy of one visible mesh in the character the user confirmed.
     CharacterCustomizer assembles its avatar from several runtime mesh components. Keeping
@@ -90,7 +91,7 @@ struct FDwmCommunityEconomyState
     FString FailureState;
 };
 
-UCLASS()
+UCLASS(config=Game)
 class DWM_DEV_API UDwmGameInstance : public UGameInstance
 {
     GENERATED_BODY()
@@ -141,8 +142,42 @@ public:
     int32 GetHankAmbientCursor() const { return HankAmbientCursor; }
     void SetHankAmbientCursor(int32 InCursor) { HankAmbientCursor = FMath::Max(0, InCursor); }
 
+    /** The Act 3 payoff: releases the turbine rotor from Parked so it plays the real
+        parked -> startup -> generating sequence exported from the R2011a model, rather
+        than starting the moment the level loads. Called from ADwmNpcActor::AdvanceDialogue
+        when Hank's ReturnAllTradesComplete sequence finishes -- see that call site for why
+        it is paired there with UnlockFarewell rather than left for either to infer the
+        other from trade state.
+        Returns false (and changes nothing) if block_rotor was never spawned -- e.g. the
+        pendulum world is loaded instead of the turbine one -- or no longer exists. Safe
+        to call more than once: a rotor already playing is left alone. */
+    UFUNCTION(BlueprintCallable, Category = "DWM")
+    bool StartTurbineActThreePayoff();
+
+    /** Persists across an OpenLevel the way bHankFarewellUnlocked does (see BeginPlay's
+        restore block in DwmNpcActor.cpp) so a player who triggers Act 3, leaves Mountain,
+        and comes back does not find the rotor freshly parked under a Farewell line that
+        already says it happened. SpawnWorldActors checks this before holding block_rotor
+        paused; it does not fast-forward the resumed run to a steady-state pose, so a
+        revisit replays the parked/startup shape once more rather than resuming mid-run --
+        an accepted simplification, not an attempt at seamless resume. */
+    bool IsTurbineRotorStarted() const { return bTurbineRotorStarted; }
+
     UPROPERTY(BlueprintReadOnly, Category = "DWM")
     FString PendingWorldId;
+
+    /** Which world-package Init() loads when there is no dwmworld:// launch URL -- i.e.
+        every ordinary PIE session. Config so a target world (e.g. "turbine" while testing
+        the supervisor startup sequence) can be switched from DefaultGame.ini:
+
+            [/Script/DWM_Dev.DwmGameInstance]
+            DebugPIEWorldId=turbine
+
+        WITHOUT recompiling to change it back and forth. Defaults to "pendulum", which is
+        the literal Init() always used before this property existed -- an unedited ini
+        reproduces exactly the old hardcoded behaviour. */
+    UPROPERTY(config, EditDefaultsOnly, BlueprintReadOnly, Category = "DWM|Debug")
+    FString DebugPIEWorldId = TEXT("pendulum");
 
     UPROPERTY(BlueprintReadOnly, Category = "DWM|Economy")
     TArray<FDwmCommunityEconomyState> EconomyStates;
@@ -202,6 +237,13 @@ private:
     TMap<FString, FDwmAssetBinding>      PendingBindings;
     TMap<FString, TArray<FDwmSimSample>> PendingSamples;
     bool bHasPendingSpawn = false;
+
+    // Actors SpawnWorldActors actually created, keyed by BlockId. Weak because the level
+    // (and therefore these actors) can be torn down by an OpenLevel the GameInstance
+    // survives; a raw or strong pointer here would either dangle or needlessly keep a
+    // destroyed actor alive. Populated once per LoadDwmWorld/SpawnWorldActors cycle.
+    TMap<FString, TWeakObjectPtr<ADwmPendulumActor>> SpawnedBlockActors;
+    bool bTurbineRotorStarted = false;
     bool bDemoTradeTerminalSpawned = false;
     int32 DemoTradeTerminalSpawnAttempts = 0;
     int32 CharacterCustomizerInputAttempts = 0;
