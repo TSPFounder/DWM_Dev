@@ -651,6 +651,60 @@ FName UDwmGameInstance::GetHostMapName(const FString& WorldId)
     return NAME_None;
 }
 
+AActor* UDwmGameInstance::FindPlacedTurbine(UWorld* World)
+{
+    if (!World)
+    {
+        return nullptr;
+    }
+
+    // Name AND editor label, because a Blueprint's class name (WindTurbine_C) and its
+    // outliner label are not always the same string.
+    for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+    {
+        AActor* Candidate = *ActorIt;
+        if (!Candidate)
+        {
+            continue;
+        }
+
+        FString Identity = Candidate->GetName();
+#if WITH_EDITOR
+        Identity += TEXT(" ");
+        Identity += Candidate->GetActorLabel();
+#endif
+
+        if (Identity.Contains(TEXT("WindTurbine"), ESearchCase::IgnoreCase))
+        {
+            return Candidate;
+        }
+    }
+
+    return nullptr;
+}
+
+USceneComponent* UDwmGameInstance::FindTurbineComponent(AActor* Turbine, const TCHAR* ComponentName)
+{
+    if (!Turbine || !ComponentName)
+    {
+        return nullptr;
+    }
+
+    TArray<USceneComponent*> Components;
+    Turbine->GetComponents<USceneComponent>(Components);
+    for (USceneComponent* Component : Components)
+    {
+        // Contains rather than equals: Blueprint components carry suffixes such as
+        // _GEN_VARIABLE once instanced in a level.
+        if (Component && Component->GetName().Contains(ComponentName, ESearchCase::IgnoreCase))
+        {
+            return Component;
+        }
+    }
+
+    return nullptr;
+}
+
 FTransform UDwmGameInstance::FindBlockSpawnAnchor(UWorld* World)
 {
     if (!World)
@@ -2562,6 +2616,7 @@ void UDwmGameInstance::SpawnWorldActors()
     // Resolved once, not per block: every block in a mechanism belongs to the same
     // machine, and iterating all actors once per block would be wasteful.
     const FTransform SpawnAnchor = FindBlockSpawnAnchor(World);
+    AActor* const PlacedTurbine = FindPlacedTurbine(World);
 
     UE_LOG(LogTemp, Log,
         TEXT("[DWM] SpawnWorldActors: spawning %d block(s) in %s."),
@@ -2578,17 +2633,55 @@ void UDwmGameInstance::SpawnWorldActors()
             continue;
         }
 
-        // Placed RELATIVE TO THE ANCHOR rather than at world origin (issue #14): the
-        // rotor has to land on the real turbine, not float in the middle of the map
-        // looking like a second one. The X stagger is kept for worlds with several
-        // bodies and no single machine to sit on -- at a real anchor every block wants
-        // the same spot, since the tower, nacelle and rotor are one assembly.
-        const bool bAnchored = !SpawnAnchor.Equals(FTransform::Identity);
+        // DO NOT DUPLICATE WHAT THE PLACED TURBINE ALREADY HAS (issue #31). The
+        // WindTurbine_C Blueprint ships Rotor, Nacelle, Pillar, Base and Anemometer
+        // components, so spawning our own nacelle and tower put a second mount on top
+        // of the first. Neither adds motion worth the duplication either: the tower's
+        // channel is a deflection in metres and is already suppressed below, and yaw
+        // is an error angle the exporter itself warns is not a heading.
+        if (PlacedTurbine
+            && (Block.BlockId == TEXT("block_yaw") || Block.BlockId == TEXT("block_tower")))
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block '%s' skipped -- the placed turbine already provides it."),
+                *Block.Name);
+            continue;
+        }
+
+        // Placed RELATIVE TO THE ANCHOR rather than at world origin (issue #14).
+        //
+        // #14's reasoning that every block wants the SAME spot was wrong, and issue
+        // #31 is what that cost: the parts are one assembly but not one point -- the
+        // tower stands on the ground, the nacelle sits on it, the rotor hangs off the
+        // hub. Anchoring them all to the actor transform stacked them at its origin,
+        // which is the BASE. The rotor now takes the placed Rotor COMPONENT's
+        // transform, which is where a rotor actually belongs.
+        FTransform BlockAnchor = SpawnAnchor;
+        if (PlacedTurbine && Block.BlockId == TEXT("block_rotor"))
+        {
+            if (USceneComponent* RotorComponent = FindTurbineComponent(PlacedTurbine, TEXT("Rotor")))
+            {
+                BlockAnchor = RotorComponent->GetComponentTransform();
+                UE_LOG(LogTemp, Log,
+                    TEXT("[DWM] block_rotor anchored to the placed hub at %s."),
+                    *BlockAnchor.GetLocation().ToCompactString());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DWM] Placed turbine has no Rotor component; ")
+                    TEXT("block_rotor falls back to the actor origin (the base)."));
+            }
+        }
+
+        // The X stagger survives only for worlds with several bodies and no single
+        // machine to sit on -- the pendulum tracer, which has no placed counterpart.
+        const bool bAnchored = !BlockAnchor.Equals(FTransform::Identity);
         const FVector LocalOffset = bAnchored
             ? FVector::ZeroVector
             : FVector(SpawnCount * 300.0f, 0.0f, 200.0f);
-        const FVector SpawnLocation = SpawnAnchor.TransformPosition(LocalOffset);
-        const FRotator SpawnRotation = SpawnAnchor.Rotator();
+        const FVector SpawnLocation = BlockAnchor.TransformPosition(LocalOffset);
+        const FRotator SpawnRotation = BlockAnchor.Rotator();
 
         FActorSpawnParameters SpawnParams;
         SpawnParams.Name = FName(*FString::Printf(
@@ -2668,6 +2761,25 @@ void UDwmGameInstance::SpawnWorldActors()
 
             Actor->InitialiseFromPackage(Block, *Binding, Samples);
             SpawnedBlockActors.Add(Block.BlockId, Actor);
+
+            // One rotor, not two (issue #31). The Blueprint's own rotor spins on its
+            // Speed variable while ours sits parked waiting for Act 3, so leaving both
+            // visible shows the machine already running beside a stopped copy of
+            // itself.
+            //
+            // ONLY AFTER OURS EXISTS. Hiding first and then failing to spawn would
+            // leave a turbine with no blades at all, which is worse than the bug.
+            if (PlacedTurbine && Block.BlockId == TEXT("block_rotor"))
+            {
+                if (USceneComponent* RotorComponent =
+                        FindTurbineComponent(PlacedTurbine, TEXT("Rotor")))
+                {
+                    RotorComponent->SetVisibility(false, true);
+                    RotorComponent->SetHiddenInGame(true, true);
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[DWM] Hid the placed turbine's own rotor; the package drives it now."));
+                }
+            }
             SpawnCount++;
             UE_LOG(LogTemp, Log,
                 TEXT("[DWM] Spawned '%s' at %s."),
