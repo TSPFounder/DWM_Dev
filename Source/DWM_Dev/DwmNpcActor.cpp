@@ -204,6 +204,12 @@ void ADwmNpcActor::PopulateDefaultHankDialogue()
                 "something this heavy before. And tools from the city \u2014 precision work no one "
                 "up here can forge."),
             FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(
+            LOCTEXT("HankDirections",
+                "Go out through the gate and follow the track down to Hillside. Ask for Sophia "
+                "Sandoval \u2014 she's got the room above the realty office. She'll be expecting "
+                "you."),
+            FText::GetEmpty()));
         DialogueByState.Add(EDwmDialogueState::QuestDetails, Details);
     }
 
@@ -304,6 +310,12 @@ void ADwmNpcActor::PopulateHillsideDialogue()
                 "engineering hours in your hands, not just a sketch on a napkin."),
             FText::GetEmpty()));
         Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("SophiaDirections",
+                "Down the stairs, right as you come out of the office, then straight on down the "
+                "market street \u2014 don't turn off it. Road climbs out the far end and drops you "
+                "into the Valley. Maria Vega will be on her porch. She generally is."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
             LOCTEXT("SophiaFarewell",
                 "Good luck up there. Come back through when it's spinning \u2014 I'd like to see it."),
             FText::GetEmpty()));
@@ -384,6 +396,12 @@ void ADwmNpcActor::PopulateHillsideDialogue()
                 "long as Mountain keeps the stone moving."),
             FText::GetEmpty()));
         Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MariaDirections",
+                "Left out of the house and follow the dirt road down \u2014 it runs all the way "
+                "into the Suburb. Ask for DeShawn Okafor; he works out of the realty office "
+                "there. Walk straight in, he won't stand on ceremony."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
             LOCTEXT("MariaFarewell",
                 "And tell Hank I said good luck. He still owes me for last winter."),
             FText::GetEmpty()));
@@ -418,6 +436,12 @@ void ADwmNpcActor::PopulateHillsideDialogue()
                 "Tell Hank the crew is ready once the parts and food are lined up. We can move fast, "
                 "but not messy."),
             FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("DeShawnDirections",
+                "City's too far to walk and I'm not sending you on foot. Bus stop's on the "
+                "corner \u2014 take the loop. When you get to the city, ask for Mike Dayton, he'll "
+                "be on the shop floor, and he'll be the loudest thing in the building."),
+            FText::GetEmpty()));
         Ambient.Lines.Add(MakeLine(Speaker,
             LOCTEXT("DeShawnAmbient1",
                 "A repair is logistics before it is heroics: people, food, transport, tools, and "
@@ -445,6 +469,11 @@ void ADwmNpcActor::PopulateHillsideDialogue()
                 "Take this number back with Sophia's design hours. Hank needs both halves before he "
                 "chooses the repair plan."),
             FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("MikeDirections",
+                "You'll want Kai before you go anywhere. He's in the back, over there. Metal's "
+                "only half of what you're carrying home."),
+            FText::GetEmpty()));
         Ambient.Lines.Add(MakeLine(Speaker,
             LOCTEXT("MikeAmbient1",
                 "Kai is upstairs over the shop floor. He has Nathan's control model turning into code "
@@ -467,6 +496,12 @@ void ADwmNpcActor::PopulateHillsideDialogue()
             LOCTEXT("KaiDetails",
                 "Software is cheaper than a broken rotor, but it still needs fittings, wiring, and "
                 "maintenance. Tell Hank the controller is part of the repair, not a decoration."),
+            FText::GetEmpty()));
+        Details.Lines.Add(MakeLine(Speaker,
+            LOCTEXT("KaiDirections",
+                "Loop runs back round the way you came \u2014 stays on it all the way up to "
+                "Mountain. Get on, and the next thing you'll be looking at is that turbine. "
+                "Hank will be waiting."),
             FText::GetEmpty()));
         Ambient.Lines.Add(MakeLine(Speaker,
             LOCTEXT("KaiAmbient1",
