@@ -279,10 +279,10 @@ void ADwmValleyLifeDirector::DiscoverValleyActors()
     if (RockingChairActor)
     {
         const FVector ChairForward = RockingChairActor->GetActorForwardVector();
-        MariaSeatLocation = RockingChairActor->GetActorLocation() - ChairForward * 8.0f;
-        // BP_Morphpose_Maria's mesh is authored 90cm below its Character origin.
-        MariaSeatLocation.Z += 90.0f;
-        MariaApproachLocation = MariaSeatLocation + ChairForward * 95.0f;
+        MariaSeatLocation =
+            RockingChairActor->GetActorLocation() - ChairForward * MariaSeatForwardOffset;
+        MariaSeatLocation.Z += MariaSeatHeightOffset;
+        MariaApproachLocation = MariaSeatLocation + ChairForward * MariaApproachDistance;
         MariaSeatRotation = RockingChairActor->GetActorRotation();
         MariaSeatRotation.Pitch = 0.0f;
         MariaSeatRotation.Roll = 0.0f;
@@ -366,8 +366,30 @@ void ADwmValleyLifeDirector::TickMariaRoutine(float DeltaSeconds)
         return;
     }
 
+    if (MariaPhase == EDwmMariaRoutinePhase::SittingDown && Now < SitTransitionEndTime)
+    {
+        // Move her onto the seat over the clip's own duration. Ease-out matches how a
+        // sit actually goes -- most of the travel early, settling at the end -- and
+        // keeps the body from arriving before the animation has finished lowering it.
+        const float Duration = FMath::Max(0.01f, SitTransitionEndTime - SitTransitionStartTime);
+        const float Alpha = FMath::Clamp((Now - SitTransitionStartTime) / Duration, 0.0f, 1.0f);
+        const float Eased = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
+
+        MariaActor->SetActorLocation(
+            FMath::Lerp(MariaSitStartLocation, MariaSeatLocation, Eased),
+            false, nullptr, ETeleportType::TeleportPhysics);
+        MariaActor->SetActorRotation(
+            FMath::Lerp(MariaSitStartRotation, MariaSeatRotation, Eased),
+            ETeleportType::TeleportPhysics);
+        return;
+    }
+
     if (MariaPhase == EDwmMariaRoutinePhase::SittingDown && Now >= SitTransitionEndTime)
     {
+        // Settle exactly on the seat: the lerp above stops a frame short of 1.0.
+        MariaActor->SetActorLocation(MariaSeatLocation, false, nullptr, ETeleportType::TeleportPhysics);
+        MariaActor->SetActorRotation(MariaSeatRotation, ETeleportType::TeleportPhysics);
+
         MariaPhase = EDwmMariaRoutinePhase::Seated;
         if (CanPlayOnMaria(MariaSitIdleAnimation))
         {
@@ -382,18 +404,31 @@ void ADwmValleyLifeDirector::TickMariaRoutine(float DeltaSeconds)
 
 void ADwmValleyLifeDirector::SeatMaria()
 {
-    MariaActor->SetActorLocation(MariaSeatLocation, false, nullptr, ETeleportType::TeleportPhysics);
-    MariaActor->SetActorRotation(MariaSeatRotation, ETeleportType::TeleportPhysics);
-
     if (CanPlayOnMaria(MariaStandToSitAnimation))
     {
+        // DO NOT TELEPORT ONTO THE SEAT FIRST. The stand-to-sit clip animates a
+        // character going from standing to seated -- it begins standing and travels
+        // backward into the chair. Starting it from an already-seated position makes
+        // the clip's own displacement fight the teleport, which is the odd motion
+        // reported in issue #13. Instead the clip plays from where she is standing
+        // and TickMariaRoutine slides her onto the seat across its duration, so the
+        // animation and the movement agree.
+        MariaSitStartLocation = MariaActor->GetActorLocation();
+        MariaSitStartRotation = MariaActor->GetActorRotation();
+
         MariaPhase = EDwmMariaRoutinePhase::SittingDown;
         MariaMesh->PlayAnimation(MariaStandToSitAnimation, false);
-        SitTransitionEndTime = GetWorld()->GetTimeSeconds()
+        SitTransitionStartTime = GetWorld()->GetTimeSeconds();
+        SitTransitionEndTime = SitTransitionStartTime
             + FMath::Max(0.1f, MariaStandToSitAnimation->GetPlayLength());
     }
     else
     {
+        // No usable transition to play, so there is nothing for a slide to stay in
+        // step with -- placing her directly is the honest fallback.
+        MariaActor->SetActorLocation(MariaSeatLocation, false, nullptr, ETeleportType::TeleportPhysics);
+        MariaActor->SetActorRotation(MariaSeatRotation, ETeleportType::TeleportPhysics);
+
         MariaPhase = EDwmMariaRoutinePhase::Seated;
         if (CanPlayOnMaria(MariaSitIdleAnimation))
         {
