@@ -632,6 +632,76 @@ bool UDwmGameInstance::IsCommunityMap(FName MapName)
     return CommunityMaps.Contains(MapName);
 }
 
+// A world package models a physical thing that stands in exactly one community, so its
+// blocks are only meaningful in that community's map -- the turbine is the Mountain's
+// turbine, not a prop that belongs anywhere a level happens to be loaded. A package not
+// listed here is unconstrained ON PURPOSE and keeps the old spawn-anywhere behaviour:
+// "pendulum" is the tracer used to verify that package playback works at all, and is
+// expected to appear in whatever map is being tested at the time.
+FName UDwmGameInstance::GetHostMapName(const FString& WorldId)
+{
+    if (WorldId.Equals(TEXT("turbine"), ESearchCase::IgnoreCase))
+    {
+        return FName(TEXT("DWM_Mountain"));
+    }
+    return NAME_None;
+}
+
+FTransform UDwmGameInstance::FindBlockSpawnAnchor(UWorld* World)
+{
+    if (!World)
+    {
+        return FTransform::Identity;
+    }
+
+    // An explicitly tagged anchor wins, so a level author can decide where the blocks
+    // belong without this code depending on what the art asset happens to be called.
+    for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+    {
+        AActor* Candidate = *ActorIt;
+        if (Candidate && Candidate->ActorHasTag(FName(TEXT("DWM_TurbineAnchor"))))
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block anchor: tagged actor '%s' at %s."),
+                *GetNameSafe(Candidate), *Candidate->GetActorLocation().ToCompactString());
+            return Candidate->GetActorTransform();
+        }
+    }
+
+    // Otherwise the placed turbine itself. Matched on name AND editor label because the
+    // Blueprint's class name (WindTurbine_C) and its label in the outliner are not
+    // always the same string -- the same reason GetDwmBootstrapIdentity checks both.
+    for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+    {
+        AActor* Candidate = *ActorIt;
+        if (!Candidate)
+        {
+            continue;
+        }
+
+        FString Identity = Candidate->GetName();
+#if WITH_EDITOR
+        Identity += TEXT(" ");
+        Identity += Candidate->GetActorLabel();
+#endif
+
+        if (Identity.Contains(TEXT("WindTurbine"), ESearchCase::IgnoreCase))
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block anchor: placed turbine '%s' at %s."),
+                *GetNameSafe(Candidate), *Candidate->GetActorLocation().ToCompactString());
+            return Candidate->GetActorTransform();
+        }
+    }
+
+    // No anchor: world origin, as before. Correct for the pendulum tracer, which has
+    // no placed counterpart; a turbine world reaching here means the placed turbine is
+    // missing or renamed, and the log line is how that gets noticed.
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] Block anchor: none found -- spawning at world origin."));
+    return FTransform::Identity;
+}
+
 void UDwmGameInstance::ApplyRouteSpecificTransitionArrival()
 {
     UWorld* World = GetWorld();
@@ -2421,6 +2491,10 @@ void UDwmGameInstance::LoadDwmWorld(const FString& WorldId)
     Db.Close();
 
     // Store for deferred spawn in OnStart()
+    // PendingWorldId is set here rather than only on the launch-URL path (which already
+    // assigned the same value before calling in): SpawnWorldActors needs it to look up
+    // the package's host map, and the PIE debug path left it empty.
+    PendingWorldId = WorldId;
     PendingBlocks = Blocks;
     PendingBindings = BindingsByBlock;
     PendingSamples = SamplesByBlock;
@@ -2442,7 +2516,6 @@ void UDwmGameInstance::SpawnWorldActors()
         UE_LOG(LogTemp, Log, TEXT("[DWM] SpawnWorldActors: nothing pending."));
         return;
     }
-    bHasPendingSpawn = false;
 
     UWorld* World = GetWorld();
     if (!World)
@@ -2452,9 +2525,43 @@ void UDwmGameInstance::SpawnWorldActors()
         return;
     }
 
+    // A package's blocks belong in one community's map (see GetHostMapName). Before this
+    // check existed, Init() -- which runs BEFORE any level loads -- queued the spawn and
+    // the first map to come up got the blocks: with DebugPIEWorldId=turbine that put the
+    // tower, nacelle and rotor in the middle of DWM_Hillside's high street, and would
+    // have done the same in every other community map. bHasPendingSpawn is deliberately
+    // NOT consumed on a mismatch -- "not this map" means not yet, not never -- so walking
+    // into the host map later still spawns them.
+    const FName HostMapName = GetHostMapName(PendingWorldId);
+    const FName CurrentMapName = GetStableMapName(World);
+    if (!HostMapName.IsNone() && HostMapName != CurrentMapName)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] SpawnWorldActors: '%s' belongs in %s, current map is %s — holding."),
+            *PendingWorldId, *HostMapName.ToString(), *CurrentMapName.ToString());
+        return;
+    }
+
+    // Stops a second spawn inside ONE loaded world (OnStart and PostLoadMap can both
+    // reach InitializeWorldRuntime). Keyed on the world rather than on a one-shot flag
+    // so that leaving the host map and coming back spawns a fresh set: the previous set
+    // was destroyed with the previous level and only stale weak pointers remain.
+    if (SpawnedIntoWorld.Get() == World)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] SpawnWorldActors: already spawned into this world — no-op."));
+        return;
+    }
+    SpawnedIntoWorld = World;
+    SpawnedBlockActors.Reset();
+
+    // Resolved once, not per block: every block in a mechanism belongs to the same
+    // machine, and iterating all actors once per block would be wasteful.
+    const FTransform SpawnAnchor = FindBlockSpawnAnchor(World);
+
     UE_LOG(LogTemp, Log,
-        TEXT("[DWM] SpawnWorldActors: spawning %d block(s)."),
-        PendingBlocks.Num());
+        TEXT("[DWM] SpawnWorldActors: spawning %d block(s) in %s."),
+        PendingBlocks.Num(), *CurrentMapName.ToString());
 
     int32 SpawnCount = 0;
     for (const FDwmBlock& Block : PendingBlocks)
@@ -2467,8 +2574,17 @@ void UDwmGameInstance::SpawnWorldActors()
             continue;
         }
 
-        // Space actors along X so multiple blocks don't overlap
-        const FVector SpawnLocation(SpawnCount * 300.0f, 0.0f, 200.0f);
+        // Placed RELATIVE TO THE ANCHOR rather than at world origin (issue #14): the
+        // rotor has to land on the real turbine, not float in the middle of the map
+        // looking like a second one. The X stagger is kept for worlds with several
+        // bodies and no single machine to sit on -- at a real anchor every block wants
+        // the same spot, since the tower, nacelle and rotor are one assembly.
+        const bool bAnchored = !SpawnAnchor.Equals(FTransform::Identity);
+        const FVector LocalOffset = bAnchored
+            ? FVector::ZeroVector
+            : FVector(SpawnCount * 300.0f, 0.0f, 200.0f);
+        const FVector SpawnLocation = SpawnAnchor.TransformPosition(LocalOffset);
+        const FRotator SpawnRotation = SpawnAnchor.Rotator();
 
         FActorSpawnParameters SpawnParams;
         SpawnParams.Name = FName(*FString::Printf(
@@ -2477,7 +2593,7 @@ void UDwmGameInstance::SpawnWorldActors()
         ADwmPendulumActor* Actor = World->SpawnActor<ADwmPendulumActor>(
             ADwmPendulumActor::StaticClass(),
             SpawnLocation,
-            FRotator::ZeroRotator,
+            SpawnRotation,
             SpawnParams);
 
         if (Actor)
@@ -2550,8 +2666,8 @@ void UDwmGameInstance::SpawnWorldActors()
             SpawnedBlockActors.Add(Block.BlockId, Actor);
             SpawnCount++;
             UE_LOG(LogTemp, Log,
-                TEXT("[DWM] Spawned '%s' at (1160 0, 70)."),
-                *Block.Name, SpawnLocation.X);
+                TEXT("[DWM] Spawned '%s' at %s."),
+                *Block.Name, *SpawnLocation.ToCompactString());
         }
         else
         {
