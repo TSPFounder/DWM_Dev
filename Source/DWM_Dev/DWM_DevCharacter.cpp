@@ -72,6 +72,9 @@ void ADWM_DevCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	// Input Action asset, while the existing movement actions stay on Enhanced Input below.
 	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevCharacter::HandlePrimaryInteraction);
 	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &ADWM_DevCharacter::InteractWithDoor);
+	// T for Trade. See InteractWithTerminal's declaration for why terminals no longer
+	// share E with dialogue (issue #20).
+	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &ADWM_DevCharacter::InteractWithTerminal);
 
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
@@ -233,6 +236,23 @@ void ADWM_DevCharacter::HandlePrimaryInteraction()
 	{
 		GEngine->AddOnScreenDebugMessage(0xD0018EULL, 2.0f, FColor::Yellow,
 			TEXT("Nothing to interact with."));
+	}
+}
+
+void ADWM_DevCharacter::InteractWithTerminal()
+{
+	// Terminal-only on purpose: no NPC check here, because the whole point of the
+	// separate key is that a terminal beside an NPC stays reachable.
+	if (ADwmTradeTerminalActor* TradeTerminal = ActiveTradeTerminal.Get())
+	{
+		TradeTerminal->ExecuteTrade(this);
+		return;
+	}
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(0xD0020002ULL, 2.0f, FColor::Yellow,
+			TEXT("No trade terminal in range."));
 	}
 }
 

@@ -87,6 +87,15 @@ public:
 	 */
 	void HandlePrimaryInteraction();
 
+	/**
+	 * Trade-terminal interaction on its own key (T), deliberately separate from the
+	 * E-key priority chain above. E resolves NPC-before-terminal, which means a
+	 * terminal standing inside an NPC's dialogue radius could never be reached by E
+	 * at all -- the conflict reported in issue #20. A dedicated key removes the
+	 * ambiguity at the source instead of guessing player intent from proximity.
+	 */
+	void InteractWithTerminal();
+
 protected:
 	/** Called for movement input */
 	void Move(const FInputActionValue& Value);
