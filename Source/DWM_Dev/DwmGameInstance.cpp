@@ -419,6 +419,10 @@ void UDwmGameInstance::Init()
             this, &UDwmGameInstance::HandlePostLoadMap);
     }
 
+    // Before anything can ask whether the trades are done. See the member's
+    // declaration for why the ledger's own history cannot be trusted as progress.
+    CaptureQuestProgressWatermark();
+
     FString LaunchUrl;
     if (TryGetLaunchUrl(LaunchUrl))
     {
@@ -2902,6 +2906,39 @@ bool UDwmGameInstance::ExecuteConfiguredTrade(const FString& BuyerCommunityId, c
     return true;
 }
 
+void UDwmGameInstance::CaptureQuestProgressWatermark()
+{
+    QuestProgressWatermark.Reset();
+
+    FSQLiteDatabase Db;
+    if (!Db.Open(*GetEconomyPackagePath(), ESQLiteDatabaseOpenMode::ReadOnly))
+    {
+        // No database yet is not an error here -- it means no stale history either,
+        // and an empty watermark already means "count everything".
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM Economy] No ledger to read a quest watermark from; all trades will count."));
+        return;
+    }
+
+    FSQLitePreparedStatement Stmt;
+    if (Stmt.Create(Db, TEXT("SELECT MAX(Timestamp) FROM StoneLedger;"),
+        ESQLitePreparedStatementFlags::Persistent))
+    {
+        if (Stmt.Step() == ESQLitePreparedStatementStepResult::Row)
+        {
+            // NULL on an empty table, which reads back as an empty string and leaves
+            // the watermark unset -- the "nothing stale to exclude" case.
+            Stmt.GetColumnValueByIndex(0, QuestProgressWatermark);
+        }
+    }
+    Stmt.Destroy();
+    Db.Close();
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM Economy] Quest progress counts trades after '%s'."),
+        QuestProgressWatermark.IsEmpty() ? TEXT("(empty ledger)") : *QuestProgressWatermark);
+}
+
 bool UDwmGameInstance::GetCompletedTradePartners(
     const FString& BuyerCommunityId, TArray<FString>& OutPartners) const
 {
@@ -2916,12 +2953,28 @@ bool UDwmGameInstance::GetCompletedTradePartners(
         return false;
     }
 
+    // Only trades made THIS playthrough count. The watermark is the newest row that
+    // already existed at startup, so the ledger's accumulated history stops
+    // satisfying the quest while the player's own trades still do (issue #30).
+    // An empty watermark means an empty ledger -- nothing to exclude, so no filter.
+    const bool bHasWatermark = !QuestProgressWatermark.IsEmpty();
+
     FSQLitePreparedStatement Stmt;
-    if (!Stmt.Create(Db,
-        TEXT("SELECT DISTINCT ToCommunityId FROM StoneLedger ")
-        TEXT("WHERE FromCommunityId = $buyer ORDER BY ToCommunityId;"),
-        ESQLitePreparedStatementFlags::Persistent)
-        || !Stmt.SetBindingValueByName(TEXT("$buyer"), BuyerCommunityId))
+    const bool bPrepared = bHasWatermark
+        ? (Stmt.Create(Db,
+               TEXT("SELECT DISTINCT ToCommunityId FROM StoneLedger ")
+               TEXT("WHERE FromCommunityId = $buyer AND Timestamp > $since ")
+               TEXT("ORDER BY ToCommunityId;"),
+               ESQLitePreparedStatementFlags::Persistent)
+           && Stmt.SetBindingValueByName(TEXT("$buyer"), BuyerCommunityId)
+           && Stmt.SetBindingValueByName(TEXT("$since"), QuestProgressWatermark))
+        : (Stmt.Create(Db,
+               TEXT("SELECT DISTINCT ToCommunityId FROM StoneLedger ")
+               TEXT("WHERE FromCommunityId = $buyer ORDER BY ToCommunityId;"),
+               ESQLitePreparedStatementFlags::Persistent)
+           && Stmt.SetBindingValueByName(TEXT("$buyer"), BuyerCommunityId));
+
+    if (!bPrepared)
     {
         UE_LOG(LogTemp, Warning,
             TEXT("[DWM Economy] Could not prepare completed trade partner query: %s"),
