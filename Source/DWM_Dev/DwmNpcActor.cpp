@@ -184,11 +184,11 @@ void ADwmNpcActor::PopulateDefaultHankDialogue()
         FDwmDialogueSequence Approach;
         Approach.Lines.Add(MakeLine(
             LOCTEXT("HankApproach",
-                "That turbine came with the land when we settled here \u2014 nobody's turned it in "
-                "years, and nobody left so much as a drawing of how it goes back together. We need "
-                "real plans before anyone touches a wrench, and hands, parts, and food for the crew "
-                "once we do. Head down to the other communities. Trade fair, come back with what we "
-                "need, and let's get this thing spinning again."),
+                "That turbine came with the land when we settled here. Nobody's turned it in "
+                "years, and nobody left detailed drawings of how it goes back together. We need "
+                "real plans before anyone touches a wrench to that thing. We need hands, parts, "
+                "and food for the crew to fix it. Head down to the other communities. Trade fair, "
+                "come back with what we need, and let's get this thing spinning again."),
             LOCTEXT("HankApproachPrompt", "What exactly do we need?")));
         DialogueByState.Add(EDwmDialogueState::Approach, Approach);
     }
@@ -199,9 +199,10 @@ void ADwmNpcActor::PopulateDefaultHankDialogue()
             LOCTEXT("HankQuestDetails",
                 "Start with Hillside \u2014 they've got engineers who can put together real CAD "
                 "drawings and a simulation model, so whoever fixes this thing isn't guessing. After "
-                "that: Grain, to feed the crew while they're working the mount. Hands that know "
-                "rigging, because none of us have hung something this heavy before. And tools from "
-                "the city \u2014 precision work no one up here can forge."),
+                "that go to the valley for grain, fruits, and vegetables to feed the crew while "
+                "they're working the mount. Hands that know rigging, because none of us have hung "
+                "something this heavy before. And tools from the city \u2014 precision work no one "
+                "up here can forge."),
             FText::GetEmpty()));
         DialogueByState.Add(EDwmDialogueState::QuestDetails, Details);
     }
@@ -219,7 +220,7 @@ void ADwmNpcActor::PopulateDefaultHankDialogue()
         FDwmDialogueSequence AllDone;
         AllDone.Lines.Add(MakeLine(
             LOCTEXT("HankReturnComplete",
-                "Real plans for the mount, grain for the crew, hands to do the rigging, and tools "
+                "Real plans for the mount, meals for the crew, hands to do the rigging, and tools "
                 "to finish it right. That's everything. Let's bring this old thing back to life."),
             FText::GetEmpty()));
         DialogueByState.Add(EDwmDialogueState::ReturnAllTradesComplete, AllDone);
@@ -292,9 +293,10 @@ void ADwmNpcActor::PopulateHillsideDialogue()
             LOCTEXT("SophiaPrompt", "What exactly did you put together?")));
         Details.Lines.Add(MakeLine(Speaker,
             LOCTEXT("SophiaDetails",
-                "Full CAD drawings of the mount and rotor assembly, plus a Simulink model of how it "
-                "should actually behave once it's running. Owen did the drawings, Nathan built the "
-                "model. Between the two, whoever's doing the repair up there won't be guessing."),
+                "Full CAD models and drawings of the mount and rotor assembly, plus a Simulink "
+                "model of how it should actually behave once it's running. Owen did the drawings, "
+                "Nathan built the model. Between the two, whoever's doing the repair up there "
+                "won't be guessing."),
             FText::GetEmpty()));
         Details.Lines.Add(MakeLine(Speaker,
             LOCTEXT("SophiaTrade",

@@ -67,7 +67,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DWM|Trade")
     double Quantity = 20.0;
 
-    /** Optional flavor description shown in the "Press E" prompt and terminal label, e.g.
+    /** Optional flavor description shown in the "Press T" prompt and terminal label, e.g.
         "Trade 20 Stone for Timber". Leave empty to auto-generate a generic description from
         the fields above instead. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DWM|Trade")

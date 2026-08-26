@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class ADwmInteractiveDoor;
+class ADwmNpcActor;
 class ADwmTradeTerminalActor;
 
 /**
@@ -37,10 +38,18 @@ public:
 	void SetActiveDoor(ADwmInteractiveDoor* Door);
 	void ClearActiveDoor(const ADwmInteractiveDoor* Door);
 
+	/** Called by a DWM NPC when the possessed pawn enters its conversation range. */
+	void SetActiveNpc(ADwmNpcActor* Npc);
+	void ClearActiveNpc(const ADwmNpcActor* Npc);
+
 private:
 	void InteractWithTradeTerminal();
+	/** T-key terminal interaction for alternate pawns -- mirrors the character's own
+	    dedicated terminal key so a CharacterCustomizer pawn behaves the same (issue #20). */
+	void InteractWithTerminalKey();
 	void InteractWithDoor();
 
 	TWeakObjectPtr<ADwmTradeTerminalActor> ActiveTradeTerminal;
 	TWeakObjectPtr<ADwmInteractiveDoor> ActiveDoor;
+	TWeakObjectPtr<ADwmNpcActor> ActiveNpc;
 };

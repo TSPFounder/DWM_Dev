@@ -61,7 +61,7 @@ void ADwmTradeTerminalActor::BeginPlay()
     InteractionSphere->OnComponentBeginOverlap.AddDynamic(this, &ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap);
     InteractionSphere->OnComponentEndOverlap.AddDynamic(this, &ADwmTradeTerminalActor::OnInteractionSphereEndOverlap);
 
-    TerminalLabel->SetText(FText::FromString(FString::Printf(TEXT("%s\nPress E"), *BuildTradeDescription())));
+    TerminalLabel->SetText(FText::FromString(FString::Printf(TEXT("%s\nPress T"), *BuildTradeDescription())));
 }
 
 FString ADwmTradeTerminalActor::BuildTradeDescription() const
@@ -93,7 +93,7 @@ void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(TradePromptMessageKey, -1.0f, FColor::Yellow,
-                FString::Printf(TEXT("Press E: %s"), *BuildTradeDescription()));
+                FString::Printf(TEXT("Press T: %s"), *BuildTradeDescription()));
 		}
 	}
 	else if (APawn* Pawn = Cast<APawn>(OtherActor))
@@ -104,7 +104,7 @@ void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent
 			if (GEngine && Pawn->IsLocallyControlled())
 			{
 				GEngine->AddOnScreenDebugMessage(TradePromptMessageKey, -1.0f, FColor::Yellow,
-					FString::Printf(TEXT("Press E: %s"), *BuildTradeDescription()));
+					FString::Printf(TEXT("Press T: %s"), *BuildTradeDescription()));
 			}
 		}
 	}
