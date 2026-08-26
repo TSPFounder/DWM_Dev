@@ -285,6 +285,21 @@ private:
 
     /** Session-only Hank conversation state. The GameInstance survives community-map loads. */
     UPROPERTY(Transient)
+    /** The newest StoneLedger Timestamp that already existed when this playthrough
+        started. Only trades written AFTER it count toward quest progress.
+
+        StoneLedger is an accounting record: it accumulates across every session and is
+        never reset. Without this cutoff the ledger's history satisfies Hank's
+        four-trade requirement before the player has done anything, and he opens with
+        the Act 3 conversation (issue #30). Empty on a ledger with no rows, in which
+        case no filtering is applied and everything counts -- correct, because there is
+        nothing stale to exclude. */
+    FString QuestProgressWatermark;
+
+    /** Reads the watermark above. Called once per playthrough, before any dialogue can
+        ask whether the trades are done. */
+    void CaptureQuestProgressWatermark();
+
     bool bHankOpeningDelivered = false;
 
     UPROPERTY(Transient)
