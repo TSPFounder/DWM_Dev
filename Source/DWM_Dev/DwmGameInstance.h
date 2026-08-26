@@ -237,6 +237,15 @@ private:
         Falls back to identity (world origin), which is the behaviour the pendulum tracer
         has always had and still wants: it has no placed counterpart to anchor to. */
     static FTransform FindBlockSpawnAnchor(UWorld* World);
+
+    /** The placed turbine in the current world, or null. Separate from the anchor
+        above because the blocks need its COMPONENTS, not just its origin: the rotor
+        belongs on the hub, and the parts it already provides must not be spawned a
+        second time (issue #31). */
+    static AActor* FindPlacedTurbine(UWorld* World);
+
+    /** One named component on the placed turbine -- Rotor, Nacelle, Pillar. */
+    static USceneComponent* FindTurbineComponent(AActor* Turbine, const TCHAR* ComponentName);
     bool TryGetLaunchUrl(FString& OutUrl) const;
     void LoadDwmWorld(const FString& WorldId);
     void SpawnWorldActors();
