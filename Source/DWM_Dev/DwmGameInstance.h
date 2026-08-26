@@ -224,6 +224,9 @@ private:
     static FName GetStableMapName(const UWorld* World);
     /** True for the five playable DWM community maps. */
     static bool IsCommunityMap(FName MapName);
+    /** The map a world package's blocks belong in, or NAME_None for a package that is
+        not tied to one. See the definition for why "pendulum" is deliberately absent. */
+    static FName GetHostMapName(const FString& WorldId);
     bool TryGetLaunchUrl(FString& OutUrl) const;
     void LoadDwmWorld(const FString& WorldId);
     void SpawnWorldActors();
@@ -236,7 +239,15 @@ private:
     TArray<FDwmBlock>                    PendingBlocks;
     TMap<FString, FDwmAssetBinding>      PendingBindings;
     TMap<FString, TArray<FDwmSimSample>> PendingSamples;
+    /** A package has been read and its blocks are waiting for their host map. NOT
+        cleared by a spawn: it stays set for the life of the loaded package so that
+        leaving the host map and returning spawns the blocks again. SpawnedIntoWorld,
+        not this flag, is what stops a second spawn inside one loaded world. */
     bool bHasPendingSpawn = false;
+    /** The world SpawnWorldActors last spawned into. Weak so a torn-down level is
+        never mistaken for the current one -- a stale pointer reads as null, which
+        correctly means "this world has not been spawned into yet". */
+    TWeakObjectPtr<UWorld> SpawnedIntoWorld;
 
     // Actors SpawnWorldActors actually created, keyed by BlockId. Weak because the level
     // (and therefore these actors) can be torn down by an OpenLevel the GameInstance

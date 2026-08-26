@@ -632,6 +632,21 @@ bool UDwmGameInstance::IsCommunityMap(FName MapName)
     return CommunityMaps.Contains(MapName);
 }
 
+// A world package models a physical thing that stands in exactly one community, so its
+// blocks are only meaningful in that community's map -- the turbine is the Mountain's
+// turbine, not a prop that belongs anywhere a level happens to be loaded. A package not
+// listed here is unconstrained ON PURPOSE and keeps the old spawn-anywhere behaviour:
+// "pendulum" is the tracer used to verify that package playback works at all, and is
+// expected to appear in whatever map is being tested at the time.
+FName UDwmGameInstance::GetHostMapName(const FString& WorldId)
+{
+    if (WorldId.Equals(TEXT("turbine"), ESearchCase::IgnoreCase))
+    {
+        return FName(TEXT("DWM_Mountain"));
+    }
+    return NAME_None;
+}
+
 void UDwmGameInstance::ApplyRouteSpecificTransitionArrival()
 {
     UWorld* World = GetWorld();
@@ -2421,6 +2436,10 @@ void UDwmGameInstance::LoadDwmWorld(const FString& WorldId)
     Db.Close();
 
     // Store for deferred spawn in OnStart()
+    // PendingWorldId is set here rather than only on the launch-URL path (which already
+    // assigned the same value before calling in): SpawnWorldActors needs it to look up
+    // the package's host map, and the PIE debug path left it empty.
+    PendingWorldId = WorldId;
     PendingBlocks = Blocks;
     PendingBindings = BindingsByBlock;
     PendingSamples = SamplesByBlock;
@@ -2442,7 +2461,6 @@ void UDwmGameInstance::SpawnWorldActors()
         UE_LOG(LogTemp, Log, TEXT("[DWM] SpawnWorldActors: nothing pending."));
         return;
     }
-    bHasPendingSpawn = false;
 
     UWorld* World = GetWorld();
     if (!World)
@@ -2452,9 +2470,39 @@ void UDwmGameInstance::SpawnWorldActors()
         return;
     }
 
+    // A package's blocks belong in one community's map (see GetHostMapName). Before this
+    // check existed, Init() -- which runs BEFORE any level loads -- queued the spawn and
+    // the first map to come up got the blocks: with DebugPIEWorldId=turbine that put the
+    // tower, nacelle and rotor in the middle of DWM_Hillside's high street, and would
+    // have done the same in every other community map. bHasPendingSpawn is deliberately
+    // NOT consumed on a mismatch -- "not this map" means not yet, not never -- so walking
+    // into the host map later still spawns them.
+    const FName HostMapName = GetHostMapName(PendingWorldId);
+    const FName CurrentMapName = GetStableMapName(World);
+    if (!HostMapName.IsNone() && HostMapName != CurrentMapName)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] SpawnWorldActors: '%s' belongs in %s, current map is %s — holding."),
+            *PendingWorldId, *HostMapName.ToString(), *CurrentMapName.ToString());
+        return;
+    }
+
+    // Stops a second spawn inside ONE loaded world (OnStart and PostLoadMap can both
+    // reach InitializeWorldRuntime). Keyed on the world rather than on a one-shot flag
+    // so that leaving the host map and coming back spawns a fresh set: the previous set
+    // was destroyed with the previous level and only stale weak pointers remain.
+    if (SpawnedIntoWorld.Get() == World)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] SpawnWorldActors: already spawned into this world — no-op."));
+        return;
+    }
+    SpawnedIntoWorld = World;
+    SpawnedBlockActors.Reset();
+
     UE_LOG(LogTemp, Log,
-        TEXT("[DWM] SpawnWorldActors: spawning %d block(s)."),
-        PendingBlocks.Num());
+        TEXT("[DWM] SpawnWorldActors: spawning %d block(s) in %s."),
+        PendingBlocks.Num(), *CurrentMapName.ToString());
 
     int32 SpawnCount = 0;
     for (const FDwmBlock& Block : PendingBlocks)
@@ -2550,8 +2598,8 @@ void UDwmGameInstance::SpawnWorldActors()
             SpawnedBlockActors.Add(Block.BlockId, Actor);
             SpawnCount++;
             UE_LOG(LogTemp, Log,
-                TEXT("[DWM] Spawned '%s' at (1160 0, 70)."),
-                *Block.Name, SpawnLocation.X);
+                TEXT("[DWM] Spawned '%s' at %s."),
+                *Block.Name, *SpawnLocation.ToCompactString());
         }
         else
         {
