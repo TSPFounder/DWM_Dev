@@ -227,6 +227,16 @@ private:
     /** The map a world package's blocks belong in, or NAME_None for a package that is
         not tied to one. See the definition for why "pendulum" is deliberately absent. */
     static FName GetHostMapName(const FString& WorldId);
+
+    /** Where the package's blocks should be placed in the current world.
+
+        Returns the placed turbine's transform when one is found, so the rotor lands on
+        the real machine rather than at world origin -- the defect reported in issue #14,
+        which showed as a second turbine floating away from the mountainside one.
+
+        Falls back to identity (world origin), which is the behaviour the pendulum tracer
+        has always had and still wants: it has no placed counterpart to anchor to. */
+    static FTransform FindBlockSpawnAnchor(UWorld* World);
     bool TryGetLaunchUrl(FString& OutUrl) const;
     void LoadDwmWorld(const FString& WorldId);
     void SpawnWorldActors();

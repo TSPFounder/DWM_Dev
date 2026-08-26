@@ -647,6 +647,61 @@ FName UDwmGameInstance::GetHostMapName(const FString& WorldId)
     return NAME_None;
 }
 
+FTransform UDwmGameInstance::FindBlockSpawnAnchor(UWorld* World)
+{
+    if (!World)
+    {
+        return FTransform::Identity;
+    }
+
+    // An explicitly tagged anchor wins, so a level author can decide where the blocks
+    // belong without this code depending on what the art asset happens to be called.
+    for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+    {
+        AActor* Candidate = *ActorIt;
+        if (Candidate && Candidate->ActorHasTag(FName(TEXT("DWM_TurbineAnchor"))))
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block anchor: tagged actor '%s' at %s."),
+                *GetNameSafe(Candidate), *Candidate->GetActorLocation().ToCompactString());
+            return Candidate->GetActorTransform();
+        }
+    }
+
+    // Otherwise the placed turbine itself. Matched on name AND editor label because the
+    // Blueprint's class name (WindTurbine_C) and its label in the outliner are not
+    // always the same string -- the same reason GetDwmBootstrapIdentity checks both.
+    for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
+    {
+        AActor* Candidate = *ActorIt;
+        if (!Candidate)
+        {
+            continue;
+        }
+
+        FString Identity = Candidate->GetName();
+#if WITH_EDITOR
+        Identity += TEXT(" ");
+        Identity += Candidate->GetActorLabel();
+#endif
+
+        if (Identity.Contains(TEXT("WindTurbine"), ESearchCase::IgnoreCase))
+        {
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM] Block anchor: placed turbine '%s' at %s."),
+                *GetNameSafe(Candidate), *Candidate->GetActorLocation().ToCompactString());
+            return Candidate->GetActorTransform();
+        }
+    }
+
+    // No anchor: world origin, as before. Correct for the pendulum tracer, which has
+    // no placed counterpart; a turbine world reaching here means the placed turbine is
+    // missing or renamed, and the log line is how that gets noticed.
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] Block anchor: none found -- spawning at world origin."));
+    return FTransform::Identity;
+}
+
 void UDwmGameInstance::ApplyRouteSpecificTransitionArrival()
 {
     UWorld* World = GetWorld();
@@ -2500,6 +2555,10 @@ void UDwmGameInstance::SpawnWorldActors()
     SpawnedIntoWorld = World;
     SpawnedBlockActors.Reset();
 
+    // Resolved once, not per block: every block in a mechanism belongs to the same
+    // machine, and iterating all actors once per block would be wasteful.
+    const FTransform SpawnAnchor = FindBlockSpawnAnchor(World);
+
     UE_LOG(LogTemp, Log,
         TEXT("[DWM] SpawnWorldActors: spawning %d block(s) in %s."),
         PendingBlocks.Num(), *CurrentMapName.ToString());
@@ -2515,8 +2574,17 @@ void UDwmGameInstance::SpawnWorldActors()
             continue;
         }
 
-        // Space actors along X so multiple blocks don't overlap
-        const FVector SpawnLocation(SpawnCount * 300.0f, 0.0f, 200.0f);
+        // Placed RELATIVE TO THE ANCHOR rather than at world origin (issue #14): the
+        // rotor has to land on the real turbine, not float in the middle of the map
+        // looking like a second one. The X stagger is kept for worlds with several
+        // bodies and no single machine to sit on -- at a real anchor every block wants
+        // the same spot, since the tower, nacelle and rotor are one assembly.
+        const bool bAnchored = !SpawnAnchor.Equals(FTransform::Identity);
+        const FVector LocalOffset = bAnchored
+            ? FVector::ZeroVector
+            : FVector(SpawnCount * 300.0f, 0.0f, 200.0f);
+        const FVector SpawnLocation = SpawnAnchor.TransformPosition(LocalOffset);
+        const FRotator SpawnRotation = SpawnAnchor.Rotator();
 
         FActorSpawnParameters SpawnParams;
         SpawnParams.Name = FName(*FString::Printf(
@@ -2525,7 +2593,7 @@ void UDwmGameInstance::SpawnWorldActors()
         ADwmPendulumActor* Actor = World->SpawnActor<ADwmPendulumActor>(
             ADwmPendulumActor::StaticClass(),
             SpawnLocation,
-            FRotator::ZeroRotator,
+            SpawnRotation,
             SpawnParams);
 
         if (Actor)
