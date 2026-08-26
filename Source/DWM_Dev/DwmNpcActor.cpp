@@ -651,9 +651,28 @@ void ADwmNpcActor::TickMovement(float DeltaSeconds)
     {
     case EDwmNpcActivity::IdleAtMarker:
     {
-        // Settle back to the placed facing while waiting.
-        const FRotator Current = GetActorRotation();
-        SetActorRotation(FMath::RInterpConstantTo(Current, HomeRotation, DeltaSeconds, TurnSpeed));
+        // Settle back to the placed facing while waiting, WITH FOOTWORK.
+        //
+        // This used to call SetActorRotation directly, which pivoted the body while the
+        // idle clip kept playing -- issue #8, "rotates instead of animating steps". The
+        // walk path already had the answer: StepTowardTarget computes the signed facing
+        // error, calls SetTurningInPlace so RefreshLocomotionAnimation swaps in the
+        // turn-left/right mocap loop, and only then moves. Arriving needs the same three
+        // steps; it simply never got them.
+        //
+        // FaceDirection takes a world DIRECTION, not a rotation, so the placed facing has
+        // to be handed over as its forward vector. There is no target position here to
+        // derive a direction from the way the walk path does.
+        const float SettleFacingError = FMath::FindDeltaAngleDegrees(
+            GetActorRotation().Yaw,
+            HomeRotation.Yaw);
+
+        const bool bSettling = FMath::Abs(SettleFacingError) > MovementFacingToleranceDegrees;
+        SetTurningInPlace(bSettling, SettleFacingError < 0.0f);
+        if (bSettling)
+        {
+            FaceDirection(HomeRotation.Vector(), DeltaSeconds);
+        }
 
         ActivityTimer -= DeltaSeconds;
         if (ActivityTimer <= 0.0f)
