@@ -148,6 +148,15 @@ void ADwmNpcActor::ConfigureProfileFromSource(EDwmNpcProfile NewProfile,
         TEXT("/Game/Scanned3DPeoplePack/RP_Character/00_Animations/"
              "rp_sophia_animated_003_idling_ue4.rp_sophia_animated_003_idling_ue4"));
 
+    // Every Hillside NPC previously took the single Sophia idle above, so a group
+    // standing together performed identical motion (issue #9). Where a compatible
+    // alternative exists, take one at random instead; PickVariedIdleAnimation returns
+    // nullptr when nothing matches this mesh, and the configured idle stands.
+    if (UAnimSequence* VariedIdle = PickVariedIdleAnimation())
+    {
+        IdleAnimation = VariedIdle;
+    }
+
     PopulateHillsideDialogue();
 }
 
@@ -961,6 +970,58 @@ void ADwmNpcActor::RefreshLocomotionAnimation()
 
     NpcMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
     NpcMesh->PlayAnimation(Clip, /*bLooping=*/true);
+
+    // Break the lockstep (issue #9). Several NPCs bootstrapped in the same pass
+    // otherwise start the same loop on the same frame and breathe in unison.
+    //
+    // ONCE PER ACTOR, and only on the idle. This function also runs on turns,
+    // activity changes and dialogue start/end; jumping to a random frame on those
+    // would snap the pose mid-scene, which is worse than the bug being fixed.
+    if (!bIdleStartRandomised && Clip == IdleAnimation && Clip->GetPlayLength() > 0.0f)
+    {
+        NpcMesh->SetPosition(FMath::FRandRange(0.0f, Clip->GetPlayLength()), /*bFireNotifies=*/false);
+        bIdleStartRandomised = true;
+    }
+}
+
+UAnimSequence* ADwmNpcActor::PickVariedIdleAnimation() const
+{
+    const USkeletalMesh* Mesh = NpcMesh ? NpcMesh->GetSkeletalMeshAsset() : nullptr;
+    if (!Mesh || !Mesh->GetSkeleton())
+    {
+        return nullptr;
+    }
+
+    // The Scanned3DPeoplePack ships exactly one idle, so variety has to come from the
+    // City Sample crowd set. Those are a DIFFERENT SKELETON, so every candidate is
+    // checked against this mesh before it can be chosen -- forcing an incompatible
+    // clip is the failure mode that produces broken-looking poses, and it is exactly
+    // what DwmValleyLifeDirector's CanPlayOnMaria guards against for the same reason.
+    static const TCHAR* const CandidatePaths[] =
+    {
+        TEXT("/Game/CitySampleCrowd/Character/Anims/Loco/MTN_Set/MTN_N_Idle.MTN_N_Idle"),
+        TEXT("/Game/CitySampleCrowd/Character/Anims/Loco/MTN_Set/MTN_N_Idle_B.MTN_N_Idle_B"),
+        TEXT("/Game/CitySampleCrowd/Character/Anims/Loco/MTN_Set/MTN_N_Idle_C.MTN_N_Idle_C"),
+        TEXT("/Game/CitySampleCrowd/Character/Anims/Loco/MTN_Set/MTN_N_Idle_D.MTN_N_Idle_D"),
+        TEXT("/Game/CitySampleCrowd/Character/Anims/Loco/MTN_Set/MTN_N_Idle_E.MTN_N_Idle_E")
+    };
+
+    TArray<UAnimSequence*> Compatible;
+    for (const TCHAR* Path : CandidatePaths)
+    {
+        UAnimSequence* Candidate = LoadObject<UAnimSequence>(nullptr, Path);
+        if (Candidate && Candidate->GetSkeleton() == Mesh->GetSkeleton())
+        {
+            Compatible.Add(Candidate);
+        }
+    }
+
+    if (Compatible.Num() == 0)
+    {
+        return nullptr;
+    }
+
+    return Compatible[FMath::RandHelper(Compatible.Num())];
 }
 
 void ADwmNpcActor::PlayOneShot(UAnimMontage* Montage, UAnimSequence* Sequence)

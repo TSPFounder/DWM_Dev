@@ -343,6 +343,17 @@ private:
     /** Single-node mode: plays the looping clip matching the current activity.
         Anim Blueprint mode: no-op, since the state machine owns this. */
     void RefreshLocomotionAnimation();
+
+    /** Picks a random compatible idle for this NPC, so a group standing together does
+        not all play the same motion. Returns nullptr when no alternative matches the
+        mesh's skeleton, in which case the configured IdleAnimation is kept. */
+    UAnimSequence* PickVariedIdleAnimation() const;
+
+    /** Starts the current idle at a random point in its loop, once per actor.
+        Gated because RefreshLocomotionAnimation also runs on turns, activity changes
+        and dialogue start/end -- re-randomising there would snap the pose mid-scene,
+        which is worse than the lockstep this fixes. */
+    bool bIdleStartRandomised = false;
     /** Plays a one-shot: the montage in Anim Blueprint mode, the sequence in single-node
         mode. Either argument may be null. */
     void PlayOneShot(UAnimMontage* Montage, UAnimSequence* Sequence);
