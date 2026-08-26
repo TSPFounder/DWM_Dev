@@ -87,6 +87,31 @@ private:
     float SitTransitionEndTime = 0.0f;
     float NextWeaponSuppressionTime = 0.0f;
 
+    /** Seat fit against the chair, exposed so it can be dialled in against
+        SM_RockingChair in the editor instead of needing a recompile per attempt.
+        The defaults are the values that were previously hardcoded here, tuned by
+        hand against an office chair -- a rocking chair will likely want different
+        ones, which is the point of making them editable. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Valley")
+    float MariaSeatForwardOffset = 8.0f;
+
+    /** BP_Morphpose_Maria's mesh is authored 90cm below its Character origin, so a
+        seat position has to be raised by that much to land the mesh on the seat. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Valley")
+    float MariaSeatHeightOffset = 90.0f;
+
+    /** How far in front of the seat she stops before the sit transition begins.
+        Wants to match roughly how far the stand-to-sit clip travels backward, or
+        the slide onto the seat will not line up with the animation. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Valley")
+    float MariaApproachDistance = 95.0f;
+
+    /** Where the sit transition started, so she can be moved onto the seat across
+        the clip rather than teleported before it. */
+    FVector MariaSitStartLocation = FVector::ZeroVector;
+    FRotator MariaSitStartRotation = FRotator::ZeroRotator;
+    float SitTransitionStartTime = 0.0f;
+
     static constexpr float MariaWalkSpeed = 125.0f;
     static constexpr float MariaTurnSpeed = 180.0f;
     static constexpr float MariaStartDelay = 1.25f;
