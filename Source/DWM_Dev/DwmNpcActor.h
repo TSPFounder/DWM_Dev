@@ -247,6 +247,26 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DWM|Movement", meta = (ClampMin = "1.0"))
     float TurnSpeed = 180.0f;
 
+    /** Degrees from the ACTOR's +X to where the character visually looks.
+
+        Zero for the native Hank setup, because the constructor already rotates his
+        mesh -90 to line the two up. A COPIED mesh does not get that correction (see
+        ConfigureProfileFromSource), so its actor forward and its visual forward are
+        a quarter turn apart -- which is why the Hillside NPCs turned to show the
+        player their side instead of their face (issue #10).
+
+        FaceDirection subtracts this, so the CHARACTER ends up facing the target
+        rather than the actor's bare +X. */
+    float MeshFacingYawOffset = 0.0f;
+
+    /** The offset applied to a copied mesh. Defaults to the same +Y-authored
+        convention the constructor documents for the Hank asset. The Hillside
+        characters come from a different pack, so this is EditAnywhere: if that pack
+        is authored to another convention, correcting it is a value change here, not
+        a code change. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC")
+    float CopiedMeshFacingYawOffset = 90.0f;
+
     /** Hank turns in place until he is this close to the travel direction. Without this
         gate he starts translating during a 180-degree reversal and appears to moonwalk
         or slide sideways. */

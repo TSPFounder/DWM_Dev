@@ -120,7 +120,15 @@ void ADwmNpcActor::ConfigureProfileFromSource(EDwmNpcProfile NewProfile,
         // The placed source people use their skeletal mesh as the actor root, so that
         // component's relative transform is already its saved world transform. The NPC
         // actor is spawned at that world transform; copying it here would apply it twice.
+        //
+        // NOTE this also drops the constructor's -90 facing correction, which is what
+        // keeps the actor's +X pointing where the character looks. The mesh is left
+        // alone on purpose -- rotating it would move art that was placed deliberately --
+        // and the difference is carried in MeshFacingYawOffset for FaceDirection to
+        // compensate instead. Without this the NPC turns to show the player its side
+        // rather than its face (issue #10).
         NpcMesh->SetRelativeTransform(FTransform::Identity);
+        MeshFacingYawOffset = CopiedMeshFacingYawOffset;
         NpcMesh->SetAnimInstanceClass(nullptr);
 
         for (int32 MaterialIndex = 0; MaterialIndex < SourceMesh->GetNumMaterials(); ++MaterialIndex)
@@ -805,7 +813,12 @@ void ADwmNpcActor::FaceDirection(const FVector& WorldDirection, float DeltaSecon
     }
 
     // Yaw only -- a walking NPC that pitches or rolls to face a target reads as broken.
-    const FRotator Target(0.0f, Flat.Rotation().Yaw, 0.0f);
+    //
+    // MeshFacingYawOffset is the gap between the actor's +X and where the character
+    // actually looks. It is zero for the native setup, whose mesh the constructor
+    // already corrects, and non-zero for a copied mesh that never got that correction.
+    // Subtracting it aims the CHARACTER at the target instead of the actor's forward.
+    const FRotator Target(0.0f, Flat.Rotation().Yaw - MeshFacingYawOffset, 0.0f);
     const FRotator Current = GetActorRotation();
     SetActorRotation(FMath::RInterpConstantTo(Current, Target, DeltaSeconds, TurnSpeed));
 }
