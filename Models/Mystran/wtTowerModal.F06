@@ -1,0 +1,288 @@
+   805134323
+
+ MYSTRAN Version 19.0.0   JUN 28 2026 MYSTRAN developed by Dr Bill Case
+*** Please report any problems to mystransolver@gmail.com ***                                                                                                                                                                                                   
+
+ >> MYSTRAN BEGIN  :  8/ 5/2026 at 13:43:23.666 The input file is wtTowerModal.dat                                                                                                                                                                                                                                                
+
+
+ >> LINK  0 BEGIN
+
+
+ID DWM,TOWER                                                                                                                                                                                                                                                    
+SOL 103                                                                                                                                                                                                                                                         
+CEND                                                                                                                                                                                                                                                            
+TITLE = DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                   
+SUBTITLE = VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                
+ECHO = NONE                                                                                                                                                                                                                                                     
+SPC = 1                                                                                                                                                                                                                                                         
+METHOD = 100                                                                                                                                                                                                                                                    
+DISP = ALL                                                                                                                                                                                                                                                      
+BEGIN BULK                                                                                                                                                                                                                                                      
+ *INFORMATION: MAT1 ENTRY        1 HAD FIELD FOR G  BLANK. MYSTRAN CALCULATED G  =  8.076923E+10
+
+
+
+
+ >> LINK  0 END
+
+
+ >> LINK  1 BEGIN
+
+               DEALLOCATED  2.30E-02 MB MEMORY FROM ARRAY STF3
+
+               DEALLOCATED  2.64E-04 MB MEMORY FROM ARRAY STFKEY
+               DEALLOCATED  2.30E-02 MB MEMORY FROM ARRAY STF3
+
+ >> LINK  1 END
+
+
+ >> LINK  2 BEGIN
+
+
+
+ *INFORMATION: AUTOSPC Summary, Overall: after identification of all AUTOSPC's                                                               
+
+                                     AUTOSPC_RAT = 1.000000E-08
+
+                       Number of DOF's identified for AUTOSPC in component  1         =            0
+                       Number of DOF's identified for AUTOSPC in component  2         =            0
+                       Number of DOF's identified for AUTOSPC in component  3         =            0
+                       Number of DOF's identified for AUTOSPC in component  4         =            0
+                       Number of DOF's identified for AUTOSPC in component  5         =            0
+                       Number of DOF's identified for AUTOSPC in component  6         =            0
+                                                                                        ------------
+                       Total number of DOF's identified overall                       =            0
+
+
+ >> LINK  2 END
+
+
+ >> LINK  4 BEGIN
+
+ SUPERLU FACTORIZATION OF MATRIX KMSM SUCCEEDED IN SUBR SYM_MAT_DECOMP_SUPRLU          
+
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+
+                           E I G E N V A L U E   A N A L Y S I S   S U M M A R Y   (LANCZOS  Mode 3 DGB, Shift eigen = -1.00E+00)
+                                                                      (SPARSE solution)
+
+                                NUMBER OF EIGENVALUES EXTRACTED  . . . . . .         6
+
+                                LARGEST OFF-DIAGONAL GENERALIZED MASS TERM    -4.6E-16 (Vecs renormed to 1.0 for gen masses)
+
+                                                                       . . .         4
+                                          MODE PAIR . . . . . . . . . .
+                                                                       . . .         2
+
+                                NUMBER OF OFF DIAGONAL GENERALIZED MASS
+                                TERMS FAILING CRITERION OF  1.0E-04. . . . .         0
+
+
+
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+
+                                            R E A L   E I G E N V A L U E S
+    MODE  EXTRACTION      EIGENVALUE           RADIANS              CYCLES            GENERALIZED         GENERALIZED        
+   NUMBER   ORDER                                                                        MASS              STIFFNESS
+
+        1       1        3.119454E+00        1.766198E+00        2.810991E-01        1.000000E+00        3.119454E+00
+        2       2        3.119454E+00        1.766198E+00        2.810991E-01        1.000000E+00        3.119454E+00
+        3       3        1.947829E+02        1.395647E+01        2.221241E+00        1.000000E+00        1.947829E+02
+        4       4        1.947829E+02        1.395647E+01        2.221241E+00        1.000000E+00        1.947829E+02
+        5       5        1.737415E+03        4.168232E+01        6.633946E+00        1.000000E+00        1.737415E+03
+        6       6        1.737415E+03        4.168232E+01        6.633946E+00        1.000000E+00        1.737415E+03
+
+
+
+ >> LINK  4 END
+
+
+ >> LINK  5 BEGIN
+
+
+ >> LINK  5 END
+
+
+ >> LINK  9 BEGIN
+
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        1
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0  2.244340E-07  2.692279E-05 -2.355810E-21 -5.868594E-06  4.892183E-08  0.0         
+              3        0  8.845764E-07  1.061125E-04 -1.725830E-20 -1.160293E-05  9.672447E-08  0.0         
+              4        0  1.967680E-06  2.360402E-04 -2.625802E-20 -1.713056E-05  1.428040E-07  0.0         
+              5        0  3.455005E-06  4.144576E-04 -4.743385E-20 -2.236438E-05  1.864342E-07  0.0         
+              6        0  5.320668E-06  6.382598E-04 -8.893846E-20 -2.720141E-05  2.267566E-07  0.0         
+              7        0  7.530412E-06  9.033376E-04 -1.351018E-19 -3.152185E-05  2.627727E-07  0.0         
+              8        0  1.004030E-05  1.204420E-03 -1.994763E-19 -3.518802E-05  2.933347E-07  0.0         
+              9        0  1.279536E-05  1.534913E-03 -2.558040E-19 -3.804394E-05  3.171422E-07  0.0         
+             10        0  1.572815E-05  1.886726E-03 -3.049319E-19 -3.991450E-05  3.327356E-07  0.0         
+             11        0  1.875733E-05  2.250103E-03 -3.621066E-19 -4.060559E-05  3.384967E-07  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    1.875733E-05  2.250103E-03  0.0           0.0           3.384967E-07  0.0         
+                MIN* :    0.0           0.0          -3.621066E-19 -4.060559E-05  0.0           0.0         
+
+                ABS* :    1.875733E-05  2.250103E-03  3.621066E-19  4.060559E-05  3.384967E-07  0.0         
+                *for output set
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        2
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0 -2.692279E-05  2.244340E-07 -1.694066E-21 -4.892183E-08 -5.868594E-06  0.0         
+              3        0 -1.061125E-04  8.845764E-07  3.388132E-21 -9.672447E-08 -1.160293E-05  0.0         
+              4        0 -2.360402E-04  1.967680E-06  1.355253E-20 -1.428040E-07 -1.713056E-05  0.0         
+              5        0 -4.144576E-04  3.455005E-06  2.032879E-20 -1.864342E-07 -2.236438E-05  0.0         
+              6        0 -6.382598E-04  5.320668E-06  4.065758E-20 -2.267566E-07 -2.720141E-05  0.0         
+              7        0 -9.033376E-04  7.530412E-06  6.776264E-20 -2.627727E-07 -3.152185E-05  0.0         
+              8        0 -1.204420E-03  1.004030E-05  1.084202E-19 -2.933347E-07 -3.518802E-05  0.0         
+              9        0 -1.534913E-03  1.279536E-05  1.084202E-19 -3.171422E-07 -3.804394E-05  0.0         
+             10        0 -1.886726E-03  1.572815E-05  1.626303E-19 -3.327356E-07 -3.991450E-05  0.0         
+             11        0 -2.250103E-03  1.875733E-05  1.626303E-19 -3.384967E-07 -4.060559E-05  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    0.0           1.875733E-05  1.626303E-19  0.0           0.0           0.0         
+                MIN* :   -2.250103E-03  0.0          -1.694066E-21 -3.384967E-07 -4.060559E-05  0.0         
+
+                ABS* :    2.250103E-03  1.875733E-05  1.626303E-19  3.384967E-07  4.060559E-05  0.0         
+                *for output set
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        3
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0  4.184288E-05  2.242764E-04 -5.421011E-20 -4.647758E-05  8.671244E-06  0.0         
+              3        0  1.476017E-04  7.911404E-04 -8.673617E-19 -7.586992E-05  1.415492E-05  0.0         
+              4        0  2.861234E-04  1.533612E-03 -8.673617E-19 -8.546777E-05  1.594558E-05  0.0         
+              5        0  4.227897E-04  2.266139E-03 -5.421011E-19 -7.400340E-05  1.380669E-05  0.0         
+              6        0  5.227602E-04  2.801977E-03 -8.673617E-19 -4.257900E-05  7.943893E-06  0.0         
+              7        0  5.555728E-04  2.977852E-03 -6.505213E-19  4.674141E-06 -8.720466E-07  0.0         
+              8        0  5.004903E-04  2.682611E-03 -1.084202E-18  6.039364E-05 -1.126754E-05  0.0         
+              9        0  3.516544E-04  1.884856E-03 -6.505213E-19  1.144348E-04 -2.134992E-05  0.0         
+             10        0  1.218345E-04  6.530287E-04 -2.168404E-19  1.550978E-04 -2.893634E-05  0.0         
+             11        0 -1.566139E-04 -8.394452E-04 -2.168404E-19  1.711968E-04 -3.193989E-05  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    5.555728E-04  2.977852E-03  0.0           1.711968E-04  1.594558E-05  0.0         
+                MIN* :   -1.566139E-04 -8.394452E-04 -1.084202E-18 -8.546777E-05 -3.193989E-05  0.0         
+
+                ABS* :    5.555728E-04  2.977852E-03  1.084202E-18  1.711968E-04  3.193989E-05  0.0         
+                *for output set
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        4
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0 -2.242764E-04  4.184288E-05 -1.897354E-19 -8.671244E-06 -4.647758E-05  0.0         
+              3        0 -7.911404E-04  1.476017E-04 -2.168404E-19 -1.415492E-05 -7.586992E-05  0.0         
+              4        0 -1.533612E-03  2.861234E-04 -5.014435E-19 -1.594558E-05 -8.546777E-05  0.0         
+              5        0 -2.266139E-03  4.227897E-04 -9.215718E-19 -1.380669E-05 -7.400340E-05  0.0         
+              6        0 -2.801977E-03  5.227602E-04 -1.128248E-18 -7.943893E-06 -4.257900E-05  0.0         
+              7        0 -2.977852E-03  5.555728E-04 -1.626303E-18  8.720466E-07  4.674141E-06  0.0         
+              8        0 -2.682611E-03  5.004903E-04 -1.843144E-18  1.126754E-05  6.039364E-05  0.0         
+              9        0 -1.884856E-03  3.516544E-04 -2.385245E-18  2.134992E-05  1.144348E-04  0.0         
+             10        0 -6.530287E-04  1.218345E-04 -2.818926E-18  2.893634E-05  1.550978E-04  0.0         
+             11        0  8.394452E-04 -1.566139E-04 -3.035766E-18  3.193989E-05  1.711968E-04  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    8.394452E-04  5.555728E-04  0.0           3.193989E-05  1.711968E-04  0.0         
+                MIN* :   -2.977852E-03 -1.566139E-04 -3.035766E-18 -1.594558E-05 -8.546777E-05  0.0         
+
+                ABS* :    2.977852E-03  5.555728E-04  3.035766E-18  3.193989E-05  1.711968E-04  0.0         
+                *for output set
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        5
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0 -1.870622E-04  5.915908E-04 -1.170938E-17 -1.138666E-04 -3.600484E-05  0.0         
+              3        0 -5.582993E-04  1.765641E-03 -2.179246E-17 -1.298365E-04 -4.105457E-05  0.0         
+              4        0 -8.378836E-04  2.649837E-03 -3.274291E-17 -5.483071E-05 -1.733758E-05  0.0         
+              5        0 -8.146754E-04  2.576440E-03 -4.315125E-17  7.257796E-05  2.294929E-05  0.0         
+              6        0 -4.288744E-04  1.356330E-03 -5.204170E-17  1.878593E-04  5.940149E-05  0.0         
+              7        0  1.846012E-04 -5.838078E-04 -6.049848E-17  2.242526E-04  7.090913E-05  0.0         
+              8        0  7.377031E-04 -2.333012E-03 -6.678685E-17  1.462466E-04  4.624346E-05  0.0         
+              9        0  9.214080E-04 -2.913986E-03 -7.361733E-17 -2.356703E-05 -7.451943E-06  0.0         
+             10        0  5.817605E-04 -1.839838E-03 -7.990570E-17 -2.030185E-04 -6.419487E-05  0.0         
+             11        0 -1.518634E-04  4.802735E-04 -8.553000E-17 -2.851760E-04 -9.017323E-05  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    9.214080E-04  2.649837E-03  0.0           2.242526E-04  7.090913E-05  0.0         
+                MIN* :   -8.378836E-04 -2.913986E-03 -8.553000E-17 -2.851760E-04 -9.017323E-05  0.0         
+
+                ABS* :    9.214080E-04  2.913986E-03  8.553000E-17  2.851760E-04  9.017323E-05  0.0         
+                *for output set
+
+
+ OUTPUT FOR SUBCASE        1
+ OUTPUT FOR EIGENVECTOR        6
+ DWM 3 MW TURBINE TOWER - NORMAL MODES                                                                                                                                                                                                                           
+ VERIFIES P.F_TOWER, WHICH WTPARAMETERS.M ONLY ASSUMES                                                                                                                                                                                                           
+
+                                                         E I G E N V E C T O R
+                                              (in global coordinate system at each grid)
+           GRID     COORD      T1            T2            T3            R1            R2            R3
+                     SYS
+              1        0  0.0           0.0           0.0           0.0           0.0           0.0         
+              2        0 -5.915908E-04 -1.870622E-04  9.757822E-19  3.600484E-05 -1.138666E-04  0.0         
+              3        0 -1.765641E-03 -5.582993E-04 -2.818926E-18  4.105457E-05 -1.298365E-04  0.0         
+              4        0 -2.649837E-03 -8.378836E-04 -2.168404E-18  1.733758E-05 -5.483071E-05  0.0         
+              5        0 -2.576440E-03 -8.146754E-04 -4.336807E-19 -2.294929E-05  7.257796E-05  0.0         
+              6        0 -1.356330E-03 -4.288744E-04 -6.505213E-19 -5.940149E-05  1.878593E-04  0.0         
+              7        0  5.838078E-04  1.846012E-04  2.168404E-18 -7.090913E-05  2.242526E-04  0.0         
+              8        0  2.333012E-03  7.377031E-04 -8.673616E-19 -4.624346E-05  1.462466E-04  0.0         
+              9        0  2.913986E-03  9.214080E-04  4.336811E-19  7.451943E-06 -2.356703E-05  0.0         
+             10        0  1.839838E-03  5.817605E-04  2.656295E-18  6.419487E-05 -2.030185E-04  0.0         
+             11        0 -4.802735E-04 -1.518634E-04  2.439455E-18  9.017323E-05 -2.851760E-04  0.0         
+                         ------------- ------------- ------------- ------------- ------------- -------------
+                MAX* :    2.913986E-03  9.214080E-04  2.656295E-18  9.017323E-05  2.242526E-04  0.0         
+                MIN* :   -2.649837E-03 -8.378836E-04 -2.818926E-18 -7.090913E-05 -2.851760E-04  0.0         
+
+                ABS* :    2.913986E-03  9.214080E-04  2.818926E-18  9.017323E-05  2.851760E-04  0.0         
+                *for output set
+
+ >> LINK  9 END
+
+    Total CPU time =  4.69E-02 seconds
+
+ >> MYSTRAN END    :  8/ 5/2026 at 13:43:23.765
+
+                                          * * * END OF JOB * * *

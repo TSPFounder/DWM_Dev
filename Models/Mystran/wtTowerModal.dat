@@ -1,0 +1,130 @@
+$ =====================================================================
+$ wtTowerModal.dat -- normal modes of the 3 MW turbine tower
+$ Dream World Maker / DWM_Dev.  Solver: MYSTRAN.  Units: SI (m,kg,N,Pa).
+$ =====================================================================
+$
+$ PURPOSE
+$   wtParameters.m sets  P.f_tower = 0.32 Hz  with the comment 'chosen,
+$   inside the window', and back-calculates K_tower from it. The soft-stiff
+$   requirement -- first bending mode between 1P and 3P -- is therefore
+$   ASSERTED, not verified. This deck computes f1 from geometry instead.
+$
+$     1P = 0.2333 Hz   (rotor 14.0 rpm)
+$     3P = 0.7000 Hz
+$
+$ EXPECTED ANSWER -- CHECK AGAINST THIS BEFORE TRUSTING THE RUN
+$   An independent Euler-Bernoulli solve of this same discretisation gives
+$       mode 1  0.2815 Hz      mode 2  2.2264 Hz
+$       mode 3  6.6526 Hz      mode 4 13.6049 Hz
+$   If MYSTRAN returns mode 1 near 0.28 Hz the deck is being read correctly.
+$   Anything far from that is a deck problem, not a tower problem.
+$
+$ MODEL
+$   10 CBAR elements, tapered hollow circular section, cantilevered at the
+$   base, with the top-head mass (rotor + nacelle + yaw) as a CONM2 at the
+$   tip. Section properties are given EXPLICITLY on PBAR rather than via
+$   PBARL: PBARL's TUBE dimension convention differs between Nastran
+$   flavours (outer/inner radius vs outer radius/thickness), and with no
+$   second solver available there is no way to catch that error by
+$   comparison. Explicit A/I1/I2/J removes the ambiguity entirely.
+$
+$   Wall thickness is DERIVED, not assumed: a constant t that reproduces
+$   the BOM tower mass of 243000 kg over the tapered geometry.
+$       t = 0.030412 m (30.4 mm), mass reproduced to 0.00%
+$   Real towers thicken toward the base, so this is a first model. Adding
+$   a thickness schedule means editing the PBAR cards only.
+$
+$ KNOWN OMISSIONS -- both LOWER f1, so the answer below is an UPPER BOUND
+$   1. Rotary inertia of the top head. CONM2 carries mass only; the
+$      nacelle's inertia about the tower top is not in the BOM.
+$   2. The top-head CG is offset UPWIND of the tower axis in reality.
+$      Modelled here as concentric.
+$   Both would reduce f1 further, i.e. push it toward 1P.
+$
+$ IF MYSTRAN REJECTS THE EXECUTIVE CONTROL
+$   Try 'SOL 3' or 'SOL MODES' in place of 'SOL 103', and 'EIGR' in place
+$   of 'EIGRL'. Those are the only dialect-sensitive lines in the file;
+$   every bulk card below is core Nastran.
+$ =====================================================================
+ID DWM,TOWER
+SOL 103
+CEND
+$
+TITLE = DWM 3 MW turbine tower - normal modes
+SUBTITLE = verifies P.f_tower, which wtParameters.m only assumes
+ECHO = NONE
+SPC = 1
+METHOD = 100
+DISP = ALL
+$
+BEGIN BULK
+$
+$ --- eigenvalue extraction: first 6 modes ----------------------------
+EIGRL   100                     6
+$
+$ --- material: structural steel --------------------------------------
+$ E and NU are tower steel (S355-class). wtParameters' G_steel = 79.3e9
+$ is 42CrMo4 for the SHAFT -- different part, different alloy.
+$ G is left blank so it is derived from E and NU.
+MAT1    1       2.1+11          0.3     7850.
+$
+$ --- grid points: 11 equal stations up the tower axis (Z up) ----------
+GRID    1               0.      0.      0.
+GRID    2               0.      0.      9.
+GRID    3               0.      0.      18.
+GRID    4               0.      0.      27.
+GRID    5               0.      0.      36.
+GRID    6               0.      0.      45.
+GRID    7               0.      0.      54.
+GRID    8               0.      0.      63.
+GRID    9               0.      0.      72.
+GRID    10              0.      0.      81.
+GRID    11              0.      0.      90.
+$
+$ --- section properties at each element midpoint ----------------------
+$ Thin-walled tube, mean diameter D, constant thickness t = 0.03041 m:
+$     A = pi*D*t        I1 = I2 = pi*D^3*t/8        J = 2*I
+$
+$ PID   z_mid[m]  D_mean[m]
+$ 101      4.50    4.2300
+PBAR    101     1       0.40414 0.9039  0.9039  1.80781
+$ 102     13.50    4.0900
+PBAR    102     1       0.39076 0.81709 0.81709 1.63419
+$ 103     22.50    3.9500
+PBAR    103     1       0.37739 0.73603 0.73603 1.47205
+$ 104     31.50    3.8100
+PBAR    104     1       0.36401 0.66051 0.66051 1.32101
+$ 105     40.50    3.6700
+PBAR    105     1       0.35064 0.59034 0.59034 1.18067
+$ 106     49.50    3.5300
+PBAR    106     1       0.33726 0.52532 0.52532 1.05064
+$ 107     58.50    3.3900
+PBAR    107     1       0.32389 0.46527 0.46527 0.93053
+$ 108     67.50    3.2500
+PBAR    108     1       0.31051 0.40997 0.40997 0.81994
+$ 109     76.50    3.1100
+PBAR    109     1       0.29713 0.35924 0.35924 0.71848
+$ 110     85.50    2.9700
+PBAR    110     1       0.28376 0.31288 0.31288 0.62575
+$
+$ --- beam elements ----------------------------------------------------
+$ Orientation vector (1,0,0) defines plane 1. It must not be parallel to
+$ the element axis, which here is global Z.
+CBAR    1       101     1       2       1.      0.      0.
+CBAR    2       102     2       3       1.      0.      0.
+CBAR    3       103     3       4       1.      0.      0.
+CBAR    4       104     4       5       1.      0.      0.
+CBAR    5       105     5       6       1.      0.      0.
+CBAR    6       106     6       7       1.      0.      0.
+CBAR    7       107     7       8       1.      0.      0.
+CBAR    8       108     8       9       1.      0.      0.
+CBAR    9       109     9       10      1.      0.      0.
+CBAR    10      110     10      11      1.      0.      0.
+$
+$ --- top-head mass: rotor + nacelle + yaw -----------------------------
+CONM2   999     11      0       149710.
+$
+$ --- base fully fixed -------------------------------------------------
+SPC1    1       123456  1
+$
+ENDDATA

@@ -61,7 +61,7 @@ namespace
     {
         static const TArray<FString> Ids = {
             TEXT("timber"), TEXT("wind_power"), TEXT("orchard_fruit"), TEXT("wool"), TEXT("grain"),
-            TEXT("water"), TEXT("skilled_labor"), TEXT("textiles"), TEXT("manufactured_tools"), TEXT("software_services") };
+            TEXT("water"), TEXT("skilled_labor"), TEXT("textiles"), TEXT("manufactured_tools"), TEXT("software_services"), TEXT("engineering_services") };
         return Ids;
     }
 
@@ -430,9 +430,11 @@ void UDwmGameInstance::Init()
         UE_LOG(LogTemp, Log,
             TEXT("[DWM] No dwmworld:// launch URL — will spawn on Play."));
 
-        // For PIE testing without a real launch URL, load the pendulum
-        // package directly so hitting Play always shows the pendulum.
-        LoadDwmWorld(TEXT("pendulum"));
+        // For PIE testing without a real launch URL, load whichever package
+        // DebugPIEWorldId names (defaults to "pendulum" -- see DwmGameInstance.h
+        // for how to point this at "turbine" via DefaultGame.ini instead).
+        UE_LOG(LogTemp, Log, TEXT("[DWM] PIE debug load: %s"), *DebugPIEWorldId);
+        LoadDwmWorld(DebugPIEWorldId);
     }
 }
 
@@ -2481,12 +2483,71 @@ void UDwmGameInstance::SpawnWorldActors()
         if (Actor)
         {
             static const TArray<FDwmSimSample> EmptySamples;
+
+            // block_tower's real SimSamples exist in the package (WriteTurbine writes
+            // them unconditionally) but are deliberately NOT handed to this actor. Its
+            // Position channel is a fore-aft deflection in METERS (x_t); this actor only
+            // knows how to turn Position into a ROTATION (see Tick()). Passing the real
+            // data through would spin the tower by "however many degrees" for however
+            // many METERS it swayed -- a different physical quantity in the rotation
+            // slot, not an approximation of one. The mesh still gets bound below for
+            // correct static placement; it just does not move until this actor (or a
+            // dedicated one) can apply Position as a translation instead.
+            const bool bSuppressMotion = (Block.BlockId == TEXT("block_tower"));
+
             const TArray<FDwmSimSample>& Samples =
-                PendingSamples.Contains(Block.BlockId)
+                (!bSuppressMotion && PendingSamples.Contains(Block.BlockId))
                 ? PendingSamples[Block.BlockId]
                 : EmptySamples;
 
+            // block_rotor spins about local PITCH, not the ADwmPendulumActor class
+            // default of Roll. Confirmed 2026-08-18 against the placed WindTurbine_C
+            // Blueprint's own working rotor animation: its Rotor component's
+            // AddLocalRotation is fed by a MakeRotator with Y (Pitch) wired to
+            // DeltaSeconds*RotationSpeed and X/Z left at literal 0 -- so this is the
+            // mesh's real spin axis, not a guess. (That Blueprint's OTHER MakeRotator,
+            // on Yaw*5, drives its Anemometer, a different component -- not the rotor.)
+            //
+            // Set PER-BLOCK here rather than changed as the class default: Roll is
+            // still correct for the pendulum tracer, which is the same actor class.
+            // block_pitch/yaw/tower have no confirmed axis of their own yet and are
+            // left at the class default until their real meshes replace REPLACE_ME
+            // and get checked the same way.
+            //
+            // ALSO HOLD block_rotor PARKED ON SPAWN, for a different reason than the
+            // axis fix above: the exported data's own 30-second parked window (see
+            // wtParameters.m P.sup.t_start) is real-time-from-simulation-start, not
+            // real-time-from-story-trigger. Without bStartPaused the rotor would begin
+            // its parked/startup/generating sequence the instant the level loads --
+            // Act 1 and Act 3 would happen on a fixed clock regardless of what the
+            // player has done. UDwmGameInstance::StartTurbineActThreePayoff() releases
+            // it; see that function and its call site in ADwmNpcActor::AdvanceDialogue.
+            if (Block.BlockId == TEXT("block_rotor"))
+            {
+                Actor->SpinAxis = EDwmSpinAxis::Pitch;
+
+                // Held parked unless this session already released it once before (a
+                // revisit after Act 3 -- see bTurbineRotorStarted's declaration for what
+                // this does and does not guarantee about the resumed pose).
+                Actor->bStartPaused = !bTurbineRotorStarted;
+            }
+            else if (Block.BlockId == TEXT("block_yaw"))
+            {
+                // UNVERIFIED, unlike block_rotor's Pitch above -- no placed Blueprint was
+                // checked for this one, because the working WindTurbine_C graph only
+                // touches its Rotor and Anemometer components; Nacelle isn't driven by it
+                // at all. This is a physics-justified default instead: yawing a nacelle
+                // is turning about the mast, i.e. the vertical axis, which is what Yaw
+                // means regardless of how any particular mesh happened to be authored --
+                // a different kind of argument than the rotor's, which depended on an
+                // arbitrary modelling choice and genuinely needed the visual check. Watch
+                // this one in PIE the same way; if SM_Nacelle's local axes don't agree
+                // with world-vertical, it still needs flipping like the rotor did.
+                Actor->SpinAxis = EDwmSpinAxis::Yaw;
+            }
+
             Actor->InitialiseFromPackage(Block, *Binding, Samples);
+            SpawnedBlockActors.Add(Block.BlockId, Actor);
             SpawnCount++;
             UE_LOG(LogTemp, Log,
                 TEXT("[DWM] Spawned '%s' at (1160 0, 70)."),
@@ -2501,6 +2562,46 @@ void UDwmGameInstance::SpawnWorldActors()
 
     UE_LOG(LogTemp, Log,
         TEXT("[DWM] Spawn complete: %d actor(s)."), SpawnCount);
+}
+
+// ---------------------------------------------------------------------------
+// StartTurbineActThreePayoff — release block_rotor from the parked hold set in
+// SpawnWorldActors. See the header comment for the call site and why this and
+// UnlockFarewell are triggered together rather than inferred from each other.
+// ---------------------------------------------------------------------------
+
+bool UDwmGameInstance::StartTurbineActThreePayoff()
+{
+    TWeakObjectPtr<ADwmPendulumActor>* Found = SpawnedBlockActors.Find(TEXT("block_rotor"));
+    if (!Found || !Found->IsValid())
+    {
+        // Not an error: this fires whenever the pendulum world (or nothing) is loaded
+        // instead of the turbine world, which is every PIE session that does not set
+        // DebugPIEWorldId=turbine. Warn rather than stay silent so a real "the payoff
+        // trigger fired but nothing happened" case is still visible in the log.
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM] StartTurbineActThreePayoff: block_rotor not found -- ")
+            TEXT("turbine world not loaded, or not yet spawned."));
+        return false;
+    }
+
+    ADwmPendulumActor* Rotor = Found->Get();
+    if (Rotor->IsPlaying())
+    {
+        // Idempotent on purpose: the dialogue completion that calls this can fire more
+        // than once (e.g. the player re-reads the same closing line on a later visit,
+        // once the return-visit resolution logic allows it), and a second release
+        // should not restart the rotor from Parked.
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM] StartTurbineActThreePayoff: already playing, no-op."));
+        return true;
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM] StartTurbineActThreePayoff: releasing the rotor from Parked."));
+    Rotor->StartPlayback();
+    bTurbineRotorStarted = true;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2756,6 +2857,28 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
     }
 
     UWorld* World = GetWorld();
+
+    // A level that places its own configured terminal does not also want the Day 18
+    // convenience cube dropped three metres in front of the player. Stand down as soon as
+    // any placed instance exists, so a level opts out simply by having one -- there is no
+    // per-map list here to drift out of sync with what is actually in the levels. City
+    // uses this to put its terminal on Kai's desk; Mountain and every level without a
+    // placed terminal keep the original Day 18 behaviour unchanged.
+    //
+    // Checked before the pawn lookup below on purpose: this answer does not depend on the
+    // pawn existing yet, so a level with a placed terminal should not burn the five retry
+    // attempts waiting for one.
+    if (World)
+    {
+        TActorIterator<ADwmTradeTerminalActor> PlacedTerminal(World);
+        if (PlacedTerminal)
+        {
+            bDemoTradeTerminalSpawned = true;
+            SetEconomyStatus(TEXT("Trade terminal ready: walk up to it and press E."), FColor::Cyan);
+            return;
+        }
+    }
+
     APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
     APawn* PlayerPawn = PlayerController ? PlayerController->GetPawn() : nullptr;
     if (!World || !PlayerPawn)

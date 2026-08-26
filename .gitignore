@@ -32,12 +32,14 @@ Content/Databases/
 /Content/AmericanCityPacks/
 /Content/CharacterCustomizer/
 /Content/CitySampleCrowd/
+/Content/CitySampleVehicles/
 /Content/CityStreets/
 /Content/CraftingStations/
 /Content/DecalConstructor/
 /Content/Elevator_corridor/
 /Content/FactoryExteriorInteriorBundle/
 /Content/Fences/
+/Content/HouseholdProps/
 /Content/HQRetroFarmhouse/
 /Content/HQ_ResidentialHouse/
 /Content/LeartesStudiosOffice/
@@ -68,6 +70,7 @@ Content/Databases/
 /Content/TreePackSpruce/
 /Content/TreePackWillow/
 /Content/UltraDynamicSky/
+/Content/Velocity_Cars_Pack/
 /Content/VillageHouse/
 /Content/VillageHousePack_v1/
 /Content/Wind_Turbine/
@@ -96,3 +99,17 @@ Content/Databases/
 /Content/StarterContent/Props/Materials/M_MaterialSphere.uasset
 /Content/StarterContent/Props/Materials/M_MaterialSphere_Plain.uasset
 /Content/StarterContent/Props/SM_MatPreviewMesh_02.uasset
+# --- Generated model artifacts (rebuilt by the scripts; not sources) ---
+Models/**/slprj/
+Models/**/*.slx
+Models/**/*.mdl
+Models/**/*.slxc
+Models/**/*.asv
+Models/**/*.autosave
+Models/**/__pycache__/
+Models/**/*.pyc
+
+# Marketplace / Fab asset packs. Large binary content, re-downloadable from the
+# Epic account that holds the licence, and not project source.
+/Content/FarmAnimalsPack/
+/Content/HQ_RetroSchoolBus/
