@@ -101,6 +101,24 @@ void ApplyBasicIdleAnimationToSourceActor(AActor* SourceActor, const TCHAR* LogP
 			continue;
 		}
 
+		// FOLLOWERS MUST NOT BE ANIMATED. A CharacterCustomizer character is a LEADER
+		// mesh (the body) plus follower components -- hair, clothing, accessories --
+		// that copy the leader's pose each frame instead of evaluating their own
+		// animation. Starting an independent idle on a follower leaves two things
+		// writing the same bones every frame: the pose copy and the follower's own
+		// animation instance. That fight is the rapid vibration reported in issue #19,
+		// worst on whichever bones carry the most followers (gloves and sleeves, hence
+		// "the hands"). Removing the Post Process Anim Blueprint did not help because
+		// the Post Process layer was never the second writer -- this loop was.
+		//
+		// DwmGameInstance.cpp already reads LeaderPoseComponent when it captures these
+		// characters and re-establishes it with SetLeaderPoseComponent on the clone;
+		// this is the same relationship, respected rather than rebuilt.
+		if (MeshComponent->LeaderPoseComponent.IsValid())
+		{
+			continue;
+		}
+
 		UAnimSequence* IdleAnimation = LoadDwmCompatibleCrowdIdleAnimation(MeshComponent);
 		if (!IdleAnimation)
 		{
@@ -115,7 +133,28 @@ void ApplyBasicIdleAnimationToSourceActor(AActor* SourceActor, const TCHAR* LogP
 
 	if (!bApplied)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] Found placed visual '%s', but no compatible City Sample or CharacterCustomizer idle animation matched its skeletal mesh."), LogPrefix, *GetNameSafe(SourceActor));
+		// Two different failures share this branch, so name which one happened:
+		// every mesh being a follower means the leader was not found (a rigging
+		// problem), while a leader with no match is an animation-compatibility
+		// problem. They need different fixes.
+		int32 LeaderCount = 0;
+		for (const USkeletalMeshComponent* MeshComponent : MeshComponents)
+		{
+			if (MeshComponent && MeshComponent->GetSkeletalMeshAsset()
+				&& !MeshComponent->LeaderPoseComponent.IsValid())
+			{
+				++LeaderCount;
+			}
+		}
+
+		if (LeaderCount == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[%s] Found placed visual '%s', but every skeletal mesh on it is a follower (no leader pose component). Nothing was animated."), LogPrefix, *GetNameSafe(SourceActor));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[%s] Found placed visual '%s', but no compatible City Sample or CharacterCustomizer idle animation matched its skeletal mesh."), LogPrefix, *GetNameSafe(SourceActor));
+		}
 	}
 }
 template <int32 NumSources>
