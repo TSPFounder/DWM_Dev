@@ -35,6 +35,7 @@
 #include "DwmNpcActor.generated.h"
 
 class ADWM_DevCharacter;
+class APawn;
 class UAnimMontage;
 class UAnimSequence;
 class UDwmDialogueWidget;
@@ -42,6 +43,20 @@ class UPrimitiveComponent;
 class USceneComponent;
 class USkeletalMeshComponent;
 class USphereComponent;
+
+/** Named DWM NPC configurations supported by this actor. */
+UENUM(BlueprintType)
+enum class EDwmNpcProfile : uint8
+{
+    Hank UMETA(DisplayName = "Hank"),
+    Sophia UMETA(DisplayName = "Sophia"),
+    Owen UMETA(DisplayName = "Owen"),
+    Nathan UMETA(DisplayName = "Nathan"),
+    Maria UMETA(DisplayName = "Maria"),
+    DeShawn UMETA(DisplayName = "DeShawn"),
+    Mike UMETA(DisplayName = "Mike"),
+    Kai UMETA(DisplayName = "Kai")
+};
 
 /** What the NPC is doing right now. Drives both movement and which animation loops. */
 UENUM(BlueprintType)
@@ -84,7 +99,7 @@ public:
     /** Called by ADWM_DevCharacter when the player presses E with this NPC in range and
         no dialogue already open. Opens the panel at whichever state fits current progress
         and suspends the movement loop. */
-    void BeginDialogue(ADWM_DevCharacter* InteractingCharacter);
+    void BeginDialogue(APawn* InteractingPawn);
 
     /** Called by ADWM_DevCharacter when the player presses E while this NPC's panel is
         already open. Shows the next line, or closes the panel if that was the last one. */
@@ -113,6 +128,18 @@ public:
         UDwmNpcAnimInstance. */
     UFUNCTION(BlueprintPure, Category = "DWM|NPC")
     float GetCurrentSpeed() const { return CurrentSpeed; }
+
+    /** Applies a named dialogue/animation profile and copies the already-placed visual
+        mesh. Called before FinishSpawningActor by the level bootstrap. */
+    void ConfigureProfileFromSource(EDwmNpcProfile NewProfile, USkeletalMeshComponent* SourceMesh);
+
+    /** Configures an invisible interaction-only copy of an NPC. This is used by Maria's
+        Valley life director so the already-placed morph-pose Blueprint remains the one
+        the player sees while the proven DWM dialogue system follows it. */
+    void ConfigureDialogueProxy(EDwmNpcProfile NewProfile);
+
+    UFUNCTION(BlueprintPure, Category = "DWM|NPC")
+    EDwmNpcProfile GetNpcProfile() const { return NpcProfile; }
 
     // ------------------------------------------------------------------
     // Animation -- TWO SUPPORTED MODES, chosen automatically at BeginPlay.
@@ -309,6 +336,8 @@ private:
     EDwmDialogueState SelectStateForThisInteraction() const;
     void ShowCurrentLine();
     void PopulateDefaultHankDialogue();
+    void PopulateHillsideDialogue();
+    bool IsHankProfile() const { return NpcProfile == EDwmNpcProfile::Hank; }
 
     // --- Animation ---
     /** Single-node mode: plays the looping clip matching the current activity.
@@ -333,7 +362,10 @@ private:
     UDwmDialogueWidget* ActiveWidget = nullptr;
 
     UPROPERTY()
-    ADWM_DevCharacter* CurrentListener = nullptr;
+    APawn* CurrentListener = nullptr;
+
+    UPROPERTY(VisibleAnywhere, Category = "DWM|NPC")
+    EDwmNpcProfile NpcProfile = EDwmNpcProfile::Hank;
 
     // --- Movement state ---
     EDwmNpcActivity Activity = EDwmNpcActivity::IdleAtMarker;
