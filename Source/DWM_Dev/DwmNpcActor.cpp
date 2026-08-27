@@ -11,13 +11,18 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
+#include "EngineUtils.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -308,6 +313,16 @@ void ADwmNpcActor::PopulateHillsideDialogue()
     {
         DisplayName = LOCTEXT("SophiaName", "Sophia");
         const FText Speaker = DisplayName;
+
+        // Issue #38: found on the couch when the player walks in, and she gets up.
+        // The offsets are how an office-chair clip is made to land on a couch cushion;
+        // they are EditAnywhere so this is a level tweak, not a recompile.
+        // Left half of the couch; Nathan takes the right. Without this they would
+        // both snap to the couch origin -- and, now that both of them get up,
+        // both end up on the same spot in front of it too.
+        SeatLateralOffset = -45.0f;
+        bStartsSeated = true;
+        bStandsForPlayer = true;
         Approach.Lines.Add(MakeLine(Speaker,
             LOCTEXT("SophiaApproach",
                 "So that's the turbine that came with your land. Ambitious purchase \u2014 nobody's "
@@ -374,6 +389,14 @@ void ADwmNpcActor::PopulateHillsideDialogue()
     {
         DisplayName = LOCTEXT("NathanName", "Nathan");
         const FText Speaker = DisplayName;
+
+        // Issue #38: on the couch beside Sophia, and gets up just after her -- the
+        // pause reads as following her lead rather than the two rising on a cue.
+        StandDelay = 0.7f;
+        // Right half of the couch, opposite her.
+        SeatLateralOffset = 45.0f;
+        bStartsSeated = true;
+        bStandsForPlayer = true;
         Approach.Lines.Add(MakeLine(Speaker,
             LOCTEXT("NathanApproach",
                 "Owen's drawings tell you what the turbine looks like. My model tells you how it's "
@@ -471,6 +494,11 @@ void ADwmNpcActor::PopulateHillsideDialogue()
     {
         DisplayName = LOCTEXT("MikeName", "Mike");
         const FText Speaker = DisplayName;
+
+        // Issue #18: starts on the couch, gets up and faces the player when they walk
+        // in. Same mechanism as Sophia -- see the Seated properties.
+        bStartsSeated = true;
+        bStandsForPlayer = true;
         Approach.Lines.Add(MakeLine(Speaker,
             LOCTEXT("MikeApproach",
                 "I have Owen's CAD drawings for the mount and rotor assembly. Good drawings mean I can "
@@ -577,6 +605,12 @@ void ADwmNpcActor::BeginPlay()
     // separate flag that could disagree with it.
     bUsingAnimBlueprint = (NpcMesh && NpcMesh->GetAnimClass() != nullptr);
 
+    StandingLocation = GetActorLocation();
+    if (bStartsSeated)
+    {
+        BeginSeated();
+    }
+
     if (bUsingAnimBlueprint)
     {
         NpcMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
@@ -610,7 +644,13 @@ void ADwmNpcActor::BeginPlay()
         }
     }
 
-    EnterActivity(EDwmNpcActivity::IdleAtMarker);
+    // NOT when already seated. BeginSeated has set the Seated activity and started the
+    // sit clip; resetting to IdleAtMarker here overwrote BOTH -- which is exactly why
+    // the seated NPCs moved onto their seat and then stood up on it.
+    if (Activity != EDwmNpcActivity::Seated)
+    {
+        EnterActivity(EDwmNpcActivity::IdleAtMarker);
+    }
 }
 
 void ADwmNpcActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -652,10 +692,476 @@ void ADwmNpcActor::Tick(float DeltaSeconds)
         return;
     }
 
+    // The seated states are handled HERE rather than in TickMovement because these
+    // NPCs run with bEnableScriptedMovement off -- ConfigureProfileFromSource sets
+    // it -- so TickMovement never reaches them. Talking sits above for the same
+    // reason.
+    if (Activity == EDwmNpcActivity::Seated)
+    {
+        TickSeatedGreetCheck(DeltaSeconds);
+        return;
+    }
+
+    if (Activity == EDwmNpcActivity::StandingUp)
+    {
+        if (APawn* Greeter = GreetTarget.Get())
+        {
+            FVector ToGreeter = Greeter->GetActorLocation() - GetActorLocation();
+            ToGreeter.Z = 0.0f;
+            FaceDirection(ToGreeter, DeltaSeconds);
+        }
+
+        if (GetWorld() && GetWorld()->GetTimeSeconds() >= StandUpEndTime)
+        {
+            EnterActivity(EDwmNpcActivity::IdleAtMarker);
+        }
+        return;
+    }
+
+    // Keep facing whoever he stood up for until they leave. Without this he would
+    // get up and immediately turn back to his placed facing, which reads as
+    // ignoring the person who just walked in.
+    if (APawn* Greeter = GreetTarget.Get())
+    {
+        FVector ToGreeter = Greeter->GetActorLocation() - GetActorLocation();
+        ToGreeter.Z = 0.0f;
+        FaceDirection(ToGreeter, DeltaSeconds);
+        return;
+    }
+
     if (bEnableScriptedMovement)
     {
         TickMovement(DeltaSeconds);
     }
+}
+
+namespace
+{
+    /** Live override for the seat facing.
+
+        These NPCs are SPAWNED AT RUNTIME by the game mode, so they have no placed
+        instance in the level whose EditAnywhere properties can be tweaked -- the
+        "just change it in the editor" escape hatch does not exist for them, and
+        settling which way a sofa faces should not cost a rebuild.
+
+        Set DWM.Seat.YawOffset to -90 (or any angle) and restart PIE. The sentinel
+        means "use the actor's own SeatYawOffset". */
+    static TAutoConsoleVariable<float> CVarSeatYawOffset(
+        TEXT("DWM.Seat.YawOffset"), -1000.0f,
+        TEXT("Overrides the seated NPC yaw offset in degrees. -1000 = use the actor value."),
+        ECVF_Default);
+
+    /** Whether a clip authored for one skeleton will pose correctly on another.
+
+        Neither pointer equality NOR an identical bone list is the right test, and this
+        went through both before landing here.
+
+        Asset packs each ship their own copy of the stock UE4 Mannequin skeleton, and the
+        copies are not identical: Office_Desk's has 68 bones, Scanned3DPeoplePack's has 95
+        -- the same mannequin plus extra bones. Both earlier tests rejected that pairing,
+        which is what kept the Hillside NPCs standing.
+
+        UE 5.3 handles this itself. UAnimSequence evaluation asks
+        FSkeletonRemappingRegistry::GetRemapping for a source-to-target mapping, which is
+        built on demand FOR ANY PAIR -- no compatibility registration needed -- and maps
+        bones by NAME. The extra 27 bones simply go undriven.
+
+        So the question that actually matters is whether every bone the clip drives EXISTS
+        by name in the target. If one is missing the remap would drop it and the pose would
+        be wrong, which is the case worth rejecting. */
+    bool AreSkeletonsPoseCompatible(const USkeleton* AnimSkeleton, const USkeleton* MeshSkeleton)
+    {
+        if (!AnimSkeleton || !MeshSkeleton)
+        {
+            return false;
+        }
+        if (AnimSkeleton == MeshSkeleton)
+        {
+            return true;
+        }
+
+        const FReferenceSkeleton& AnimBones = AnimSkeleton->GetReferenceSkeleton();
+        const FReferenceSkeleton& MeshBones = MeshSkeleton->GetReferenceSkeleton();
+        if (AnimBones.GetNum() == 0)
+        {
+            return false;
+        }
+
+        int32 MissingCount = 0;
+        FName FirstMissing = NAME_None;
+        for (int32 Index = 0; Index < AnimBones.GetNum(); ++Index)
+        {
+            const FName BoneName = AnimBones.GetBoneName(Index);
+            if (MeshBones.FindBoneIndex(BoneName) == INDEX_NONE)
+            {
+                if (MissingCount == 0)
+                {
+                    FirstMissing = BoneName;
+                }
+                ++MissingCount;
+            }
+        }
+
+        if (MissingCount > 0)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM NPC] '%s' drives %d bone(s) absent from '%s' (first: '%s'); ")
+                TEXT("the remap would drop them, so the clip is rejected."),
+                *GetNameSafe(AnimSkeleton), MissingCount,
+                *GetNameSafe(MeshSkeleton), *FirstMissing.ToString());
+            return false;
+        }
+
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM NPC] '%s' (%d bones) remaps by name onto '%s' (%d bones)."),
+            *GetNameSafe(AnimSkeleton), AnimBones.GetNum(),
+            *GetNameSafe(MeshSkeleton), MeshBones.GetNum());
+        return true;
+    }
+}
+
+UAnimSequence* ADwmNpcActor::PickVariedSitIdle() const
+{
+    const USkeletalMesh* Mesh = NpcMesh ? NpcMesh->GetSkeletalMeshAsset() : nullptr;
+    if (!Mesh)
+    {
+        return nullptr;
+    }
+
+    // Seated idles that read plausibly on a couch. The desk-bound clips in this pack
+    // (Writing, Signing_Papers, Laptop, Computer_Idle) are deliberately left out --
+    // they mime working at a surface that is not there.
+    static const TCHAR* const Candidates[] = {
+        TEXT("/Game/Office_Desk/Animation/Root_Motion/Office_Desk_Sit_Idle.Office_Desk_Sit_Idle"),
+        TEXT("/Game/Office_Desk/Animation/Root_Motion/Office_Desk_Bored_Idle.Office_Desk_Bored_Idle"),
+        TEXT("/Game/Office_Desk/Animation/Root_Motion/Office_Desk_Cellphone.Office_Desk_Cellphone")
+    };
+
+    TArray<UAnimSequence*> Usable;
+    for (const TCHAR* Path : Candidates)
+    {
+        if (UAnimSequence* Clip = LoadObject<UAnimSequence>(nullptr, Path))
+        {
+            if (AreSkeletonsPoseCompatible(Clip->GetSkeleton(), Mesh->GetSkeleton()))
+            {
+                Usable.Add(Clip);
+            }
+        }
+    }
+
+    return Usable.Num() > 0 ? Usable[FMath::RandRange(0, Usable.Num() - 1)] : nullptr;
+}
+
+AActor* ADwmNpcActor::FindSeatActor() const
+{
+    if (SeatMeshNameFilters.Num() == 0 || !GetWorld())
+    {
+        return nullptr;
+    }
+
+    // Same shape as DwmValleyLifeDirector's search for Maria's SM_RockingChair: match the
+    // static mesh ASSET path rather than the actor name, because level actors get
+    // auto-generated names while the asset they reference does not.
+    AActor* Best = nullptr;
+    float BestDistSq = SeatSearchRadius * SeatSearchRadius;
+
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        AActor* Candidate = *It;
+        if (!Candidate || Candidate == this)
+        {
+            continue;
+        }
+
+        const UStaticMeshComponent* MeshComp = Candidate->FindComponentByClass<UStaticMeshComponent>();
+        const UStaticMesh* Asset = MeshComp ? MeshComp->GetStaticMesh() : nullptr;
+        if (!Asset)
+        {
+            continue;
+        }
+
+        // Match the actor name TOO, not just the asset path: a level can rename the
+        // placed instance (SM_Sofa_2) independently of the asset it references.
+        const FString AssetPath = Asset->GetPathName();
+        const FString ActorName = Candidate->GetName();
+        bool bMatches = false;
+        for (const FString& Filter : SeatMeshNameFilters)
+        {
+            if (!Filter.IsEmpty()
+                && (AssetPath.Contains(Filter, ESearchCase::IgnoreCase)
+                    || ActorName.Contains(Filter, ESearchCase::IgnoreCase)))
+            {
+                bMatches = true;
+                break;
+            }
+        }
+        if (!bMatches)
+        {
+            continue;
+        }
+
+        const float DistSq = FVector::DistSquared(Candidate->GetActorLocation(), GetActorLocation());
+        if (DistSq < BestDistSq)
+        {
+            BestDistSq = DistSq;
+            Best = Candidate;
+        }
+    }
+
+    return Best;
+}
+
+void ADwmNpcActor::BeginSeated()
+{
+    const USkeletalMesh* Mesh = NpcMesh ? NpcMesh->GetSkeletalMeshAsset() : nullptr;
+    if (!Mesh || !Mesh->GetSkeleton())
+    {
+        return;
+    }
+
+    if (!SitIdleAnimation)
+    {
+        // A random compatible seated idle per actor. Offsetting the start time was
+        // not enough on its own: both NPCs were playing the same subtle motion.
+        SitIdleAnimation = PickVariedSitIdle();
+    }
+    if (!SitIdleAnimation)
+    {
+        SitIdleAnimation = LoadObject<UAnimSequence>(nullptr,
+            TEXT("/Game/Office_Desk/Animation/Root_Motion/"
+                 "Office_Desk_Sit_Idle.Office_Desk_Sit_Idle"));
+    }
+    if (!SitToStandAnimation)
+    {
+        SitToStandAnimation = LoadObject<UAnimSequence>(nullptr,
+            TEXT("/Game/Office_Desk/Animation/Root_Motion/"
+                 "Office_Desk_Sit_To_Stand.Office_Desk_Sit_To_Stand"));
+    }
+
+    // Two ways this can fail, and BOTH must be caught BEFORE the seat offsets are
+    // applied -- an NPC moved onto the cushion while still standing looks like he is
+    // floating, which is worse than simply not sitting.
+    //
+    //   1. A clip from another skeleton would not sit him down, it would break his pose.
+    //   2. An Anim Blueprint owns the pose every frame, and RefreshLocomotionAnimation
+    //      deliberately refuses to fight it (see its early-out). Seating such an NPC
+    //      would leave him in the Seated state wearing a standing pose.
+    //
+    // Staying standing is the honest failure in both cases. Seating an anim-BP NPC is a
+    // Blueprint state-machine change, not something this can force from C++.
+    bSeatedAnimationsUsable = !bUsingAnimBlueprint && SitIdleAnimation
+        && AreSkeletonsPoseCompatible(SitIdleAnimation->GetSkeleton(), Mesh->GetSkeleton());
+
+    if (!bSeatedAnimationsUsable)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM NPC] '%s' cannot be seated (%s); leaving him standing rather ")
+            TEXT("than posing him wrongly."),
+            *GetNameSafe(this),
+            bUsingAnimBlueprint ? TEXT("an Anim Blueprint owns his pose")
+                                : TEXT("the sit clips target a different skeleton"));
+        return;
+    }
+
+    // Onto the furniture. Sitting at the PLACED spot would seat him wherever the level
+    // author happened to stand him -- mid-room and mid-air -- so the couch is located
+    // first and he is moved onto it, exactly as Maria is moved onto her chair.
+    FVector SeatOrigin = StandingLocation;
+    FRotator SeatRotation = GetActorRotation();
+    float AppliedYaw = 0.0f;
+
+    if (const AActor* Seat = FindSeatActor())
+    {
+        SeatOrigin = Seat->GetActorLocation();
+        const float CVarYaw = CVarSeatYawOffset.GetValueOnGameThread();
+        AppliedYaw = (CVarYaw > -999.0f) ? CVarYaw : SeatYawOffset;
+        SeatRotation = Seat->GetActorRotation() + FRotator(0.0f, AppliedYaw, 0.0f);
+
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM NPC] '%s' is sitting on '%s' (seat yaw %.0f + offset %.0f)."),
+            *GetNameSafe(this), *GetNameSafe(Seat),
+            Seat->GetActorRotation().Yaw, AppliedYaw);
+
+        // Where he ends up once he stands: in front of the couch rather than inside it,
+        // at the floor height he was originally placed at.
+        //
+        // The lateral offset has to carry through here as well. Two people who share
+        // a couch and BOTH get up would otherwise rise into the same spot in front of
+        // it, having been correctly separated while seated.
+        const FVector StandForward = SeatRotation.Vector();
+        const FVector StandRight = FRotationMatrix(SeatRotation).GetUnitAxis(EAxis::Y);
+        StandingLocation = SeatOrigin
+            + StandForward * StandClearance
+            + StandRight * SeatLateralOffset;
+        StandingLocation.Z = GetActorLocation().Z;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM NPC] '%s' found no [%s] within %.0f units; sitting where placed."),
+            *GetNameSafe(this), *FString::Join(SeatMeshNameFilters, TEXT(", ")),
+            SeatSearchRadius);
+    }
+
+    // The clips are authored for an office chair, so these offsets are how a couch gets
+    // accounted for. SeatLateralOffset is what keeps two people sharing one couch out of
+    // the same cushion.
+    const FVector SeatForward = SeatRotation.Vector();
+    const FVector SeatRight = FRotationMatrix(SeatRotation).GetUnitAxis(EAxis::Y);
+
+    // Stored on the actor rather than in a local, so ReturnToSeat can put him back on
+    // the same cushion when the player leaves.
+    SeatedLocation = SeatOrigin
+        - SeatForward * SeatedForwardOffset
+        + SeatRight * SeatLateralOffset;
+    SeatedLocation.Z += SeatedHeightOffset;
+    SeatedRotation = FRotator(0.0f, SeatRotation.Yaw - MeshFacingYawOffset, 0.0f);
+
+    SetActorLocation(SeatedLocation, false, nullptr, ETeleportType::TeleportPhysics);
+
+    // SeatRotation is used for GEOMETRY above (which way is forward, which way is
+    // along the cushion), but the actor's yaw is not where the character visually
+    // looks -- MeshFacingYawOffset is the gap, and it is a quarter turn on every
+    // copied mesh. Setting the actor to the couch's rotation raw would seat him
+    // facing sideways out of it. This is the same correction FaceDirection applies,
+    // and the same mistake issue #10 was.
+    SetActorRotation(FRotator(0.0f, SeatRotation.Yaw - MeshFacingYawOffset, 0.0f));
+
+    EnterActivity(EDwmNpcActivity::Seated);
+}
+
+bool ADwmNpcActor::ShouldStandForPlayer(const APawn* Player) const
+{
+    if (!Player || !GetWorld())
+    {
+        return false;
+    }
+
+    const FVector PlayerLocation = Player->GetActorLocation();
+    if (FVector::DistSquared(PlayerLocation, GetActorLocation()) > FMath::Square(GreetRadius))
+    {
+        return false;
+    }
+
+    if (!bGreetRequiresLineOfSight)
+    {
+        return true;
+    }
+
+    // Trace between chest heights, not actor origins: a seated NPC's origin sits near
+    // the cushion, and a trace from there would clip the couch or the floor and report
+    // the player as hidden while he is standing right in front of them.
+    const FVector From = GetActorLocation() + FVector(0.0f, 0.0f, 60.0f);
+    const FVector To = PlayerLocation + FVector(0.0f, 0.0f, 40.0f);
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(DwmNpcGreetTrace), /*bTraceComplex=*/false);
+    Params.AddIgnoredActor(this);
+    Params.AddIgnoredActor(Player);
+
+    // A BLOCKED trace means a wall is in the way -- stay seated.
+    return !GetWorld()->LineTraceTestByChannel(From, To, ECC_Visibility, Params);
+}
+
+void ADwmNpcActor::TickSeatedGreetCheck(float DeltaSeconds)
+{
+    if (!bStandsForPlayer)
+    {
+        return;
+    }
+
+    // The stagger countdown runs EVERY frame, ahead of the poll throttle -- counting
+    // it down inside the throttled section would quantise the delay to the poll
+    // interval, making a 0.7s stagger land at 0.75s or 1.0s depending on phase.
+    if (PendingStandTimer >= 0.0f)
+    {
+        PendingStandTimer -= DeltaSeconds;
+        if (PendingStandTimer <= 0.0f)
+        {
+            PendingStandTimer = -1.0f;
+            if (APawn* Waiting = PendingStandTarget.Get())
+            {
+                StandUpForPlayer(Waiting);
+            }
+        }
+        return;
+    }
+
+    GreetCheckTimer -= DeltaSeconds;
+    if (GreetCheckTimer > 0.0f)
+    {
+        return;
+    }
+    GreetCheckTimer = FMath::Max(0.05f, GreetCheckInterval);
+
+    // Polled rather than driven by the interaction sphere's overlap. Overlap fires ONCE,
+    // on entry, and at that instant the player is usually still behind a wall -- so a
+    // visibility test there would fail and never be retried. Polling lets him stand the
+    // moment he can actually see you.
+    if (APawn* Player = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
+    {
+        if (ShouldStandForPlayer(Player))
+        {
+            if (StandDelay > 0.0f)
+            {
+                PendingStandTarget = Player;
+                PendingStandTimer = StandDelay;
+            }
+            else
+            {
+                StandUpForPlayer(Player);
+            }
+        }
+    }
+}
+
+void ADwmNpcActor::ReturnToSeat()
+{
+    if (!bStartsSeated || !bSeatedAnimationsUsable || Activity == EDwmNpcActivity::Seated)
+    {
+        return;
+    }
+
+    SetActorLocation(SeatedLocation, false, nullptr, ETeleportType::TeleportPhysics);
+    SetActorRotation(SeatedRotation);
+
+    // Disarm, so the next approach starts the stagger fresh rather than firing the
+    // instant he sits back down.
+    PendingStandTimer = -1.0f;
+    PendingStandTarget = nullptr;
+
+    EnterActivity(EDwmNpcActivity::Seated);
+}
+
+void ADwmNpcActor::StandUpForPlayer(APawn* Greeter)
+{
+    if (Activity != EDwmNpcActivity::Seated || !bStandsForPlayer || !Greeter)
+    {
+        return;
+    }
+
+    GreetTarget = Greeter;
+
+    // Back to where he was placed: the seat offsets put him on the cushion, and the
+    // get-up clip should end with him standing where the level author intended.
+    SetActorLocation(StandingLocation, false, nullptr, ETeleportType::TeleportPhysics);
+
+    const USkeletalMesh* StandMesh = NpcMesh ? NpcMesh->GetSkeletalMeshAsset() : nullptr;
+    const bool bCanPlay = SitToStandAnimation && StandMesh
+        && AreSkeletonsPoseCompatible(SitToStandAnimation->GetSkeleton(), StandMesh->GetSkeleton());
+
+    if (bCanPlay && !bUsingAnimBlueprint)
+    {
+        StandUpEndTime = GetWorld()
+            ? GetWorld()->GetTimeSeconds() + FMath::Max(0.1f, SitToStandAnimation->GetPlayLength())
+            : 0.0f;
+        EnterActivity(EDwmNpcActivity::StandingUp);
+        NpcMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+        NpcMesh->PlayAnimation(SitToStandAnimation, /*bLooping=*/false);
+        return;
+    }
+
+    // No usable get-up clip: stand immediately rather than stay stuck sitting.
+    EnterActivity(EDwmNpcActivity::IdleAtMarker);
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1464,34 @@ void ADwmNpcActor::RefreshLocomotionAnimation()
         return;
     }
 
+    // The get-up clip is a one-shot started by StandUpForPlayer; re-selecting a
+    // looping clip here would cut it off on its first frame.
+    if (Activity == EDwmNpcActivity::StandingUp)
+    {
+        return;
+    }
+
+    if (Activity == EDwmNpcActivity::Seated && SitIdleAnimation && bSeatedAnimationsUsable)
+    {
+        NpcMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+        NpcMesh->PlayAnimation(SitIdleAnimation, /*bLooping=*/true);
+
+        // Two people on one couch breathing in perfect lockstep reads as a glitch. Same
+        // desync issue #9 fixed for the standing idle, needed again because this branch
+        // returns BEFORE that code runs.
+        // Its OWN flag. bIdleStartRandomised belongs to the STANDING idle, and sharing
+        // it meant whichever clip ran first consumed the one chance to offset -- so
+        // the seated clip often started at frame zero on every actor.
+        if (!bSeatedIdleRandomised && SitIdleAnimation->GetPlayLength() > 0.0f)
+        {
+            NpcMesh->SetPosition(
+                FMath::FRandRange(0.0f, SitIdleAnimation->GetPlayLength()),
+                /*bFireNotifies=*/false);
+            bSeatedIdleRandomised = true;
+        }
+        return;
+    }
+
     const bool bMoving =
         Activity == EDwmNpcActivity::WalkingToTurbine ||
         Activity == EDwmNpcActivity::Wandering ||
@@ -1106,6 +1640,11 @@ void ADwmNpcActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* Overlapp
         {
             Controller->SetActiveNpc(this);
         }
+        // NOT the stand-up trigger. Standing is driven by TickSeatedGreetCheck, which
+        // also requires line of sight; this sphere fires once on entry, through walls,
+        // and 250 units is close enough that he would rise as you arrive rather than as
+        // you come through the door.
+
         if (GEngine)
         {
             GEngine->AddOnScreenDebugMessage(NpcPromptMessageKey, -1.0f, FColor::White,
@@ -1124,6 +1663,18 @@ void ADwmNpcActor::OnInteractionSphereEndOverlap(UPrimitiveComponent* Overlapped
         if (CurrentListener == Pawn)
         {
             EndDialogue();
+        }
+
+        // Stop tracking them once they leave, so he settles back to his placed
+        // facing instead of staring after them.
+        if (GreetTarget.Get() == Pawn)
+        {
+            GreetTarget = nullptr;
+
+            // Back to the couch. Standing up is a REACTION to the player, so it should
+            // not be permanent -- otherwise one pass through the room leaves them on
+            // their feet for the rest of the game.
+            ReturnToSeat();
         }
         if (ADWM_DevCharacter* Character = Cast<ADWM_DevCharacter>(Pawn))
         {

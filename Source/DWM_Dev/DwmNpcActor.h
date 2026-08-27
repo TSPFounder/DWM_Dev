@@ -78,7 +78,13 @@ enum class EDwmNpcActivity : uint8
     ReturningHome   UMETA(DisplayName = "Returning Home"),
 
     /** Paused for a conversation. Movement is suspended and he faces the player. */
-    Talking         UMETA(DisplayName = "Talking")
+    Talking         UMETA(DisplayName = "Talking"),
+
+    /** Sitting on furniture, waiting. Holds until something asks him to stand. */
+    Seated          UMETA(DisplayName = "Seated"),
+
+    /** Playing the get-up clip, on the way from Seated to standing. */
+    StandingUp      UMETA(DisplayName = "Standing Up")
 };
 
 UCLASS()
@@ -246,6 +252,164 @@ public:
     /** Turn rate in degrees/sec while walking or turning to face something. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DWM|Movement", meta = (ClampMin = "1.0"))
     float TurnSpeed = 180.0f;
+
+    // ------------------------------------------------------------------
+    // Seated behaviour (issues #18 and #38)
+    //
+    // Sitting and standing stay SEPARATE flags even though all three seated NPCs
+    // currently do both: "sits" and "reacts to the player" are independent traits,
+    // and a background character who stays put is the obvious next use.
+    // ------------------------------------------------------------------
+
+    /** Start the level sitting rather than standing. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bStartsSeated = false;
+
+    /** Get up when the player comes within interaction range. Ignored unless
+        bStartsSeated is also set. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bStandsForPlayer = false;
+
+    /** Height added while seated. The sit clips are authored for an office chair,
+        so a character placed on a couch will not land on the cushion by luck --
+        this is the dial, same as issue #13 needed for the rocking chair. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatedHeightOffset = 0.0f;
+
+    /** Distance moved back into the seat while seated, along the placed facing. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatedForwardOffset = 0.0f;
+
+    /** Substrings matched against nearby static mesh assets to find the furniture to sit
+        on. Follows DwmValleyLifeDirector, which locates Maria's chair by "SM_RockingChair"
+        the same way.
+
+        A LIST because the word on the asset is not the word in the script: the Hillside
+        room's "couch" is SM_Sofa, and a lone "Couch" filter silently missed it. Empty
+        means "sit where placed" and skips the search. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    TArray<FString> SeatMeshNameFilters = { TEXT("Couch"), TEXT("Sofa") };
+
+    /** How far to look for that furniture. Bounded so an NPC never snaps to a couch in
+        a different building. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatSearchRadius = 1200.0f;
+
+    /** Sideways shift along the seat, so two people sharing one couch do not stack in
+        the same cushion. Negative is to the seat's left. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatLateralOffset = 0.0f;
+
+    /** Correction if the furniture asset's +X is not the direction a sitter faces.
+
+        SM_Sofa's +X runs ALONG the couch rather than out of it, which seated everyone
+        a quarter turn off -- and, because the lateral offset is perpendicular to this,
+        separated them across the couch's DEPTH instead of along its length, stacking
+        them. One angle fixes both.
+
+        Override live with the DWM.Seat.YawOffset console variable; these NPCs are
+        spawned at runtime, so there is no placed instance to edit. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatYawOffset = 90.0f;
+
+    /** How far in front of the seat he ends up once he stands, so he is not left
+        standing inside the couch. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float StandClearance = 70.0f;
+
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    UAnimSequence* SitIdleAnimation = nullptr;
+
+    /** Seconds to wait after noticing the player before getting up.
+
+        Two people rising in perfect unison looks choreographed. A short stagger reads
+        as one of them following the other lead. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float StandDelay = 0.0f;
+
+    /** Counts down StandDelay once the player has been noticed. Negative = not armed. */
+    float PendingStandTimer = -1.0f;
+
+    /** Who the pending stand is for. */
+    TWeakObjectPtr<APawn> PendingStandTarget;
+
+    /** Phase offset applied to the SEATED idle, tracked separately from the standing
+        idle flag. Sharing one flag meant whichever clip ran first consumed it, and the
+        other then started at frame zero on every actor. */
+    bool bSeatedIdleRandomised = false;
+
+    /** Picks one of several compatible seated idles, so two people on a couch are not
+        merely offset within the SAME motion but actually doing different things. */
+    UAnimSequence* PickVariedSitIdle() const;
+
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    UAnimSequence* SitToStandAnimation = nullptr;
+
+    /** How close the player must be before he considers getting up. Wider than the
+        250-unit interaction sphere, because he should be on his feet by the time you
+        are close enough to talk -- not standing up in your face. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float GreetRadius = 900.0f;
+
+    /** Require that he can actually SEE the player before standing.
+
+        This is what makes him wait for the doorway. A radius alone is a sphere that
+        passes straight through walls, so he would stand while the player was still in
+        the corridor -- and by the time you walked in he would already be up, looking
+        like he had never been sitting. A trace is blocked by the wall and clears the
+        moment you cross the threshold, which needs no trigger volume placed in the
+        level and works for whichever way you come in. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bGreetRequiresLineOfSight = true;
+
+    /** Seconds between visibility checks. The trace is cheap but not free, and this
+        runs on every seated NPC; a quarter second is imperceptible when standing up
+        takes about a second. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float GreetCheckInterval = 0.25f;
+
+    /** Counts down to the next visibility check. */
+    float GreetCheckTimer = 0.0f;
+
+    /** Whether the player is near enough AND visible to be greeted. */
+    bool ShouldStandForPlayer(const APawn* Player) const;
+
+    /** Runs the periodic greet check while seated. */
+    void TickSeatedGreetCheck(float DeltaSeconds);
+
+    /** Whoever this NPC stood up to greet. Held so he keeps facing them after the
+        get-up clip ends, and cleared when they walk away. */
+    TWeakObjectPtr<APawn> GreetTarget;
+
+    /** Where and how he sits, remembered so he can RETURN to the couch when the player
+        leaves. Without this, one approach ends the seated behaviour permanently and
+        anyone walking back in finds three people standing in a room with a sofa. */
+    FVector SeatedLocation = FVector::ZeroVector;
+    FRotator SeatedRotation = FRotator::ZeroRotator;
+
+    /** Puts him back on the seat once the player he stood for has gone. */
+    void ReturnToSeat();
+
+    /** When the get-up clip finishes. */
+    float StandUpEndTime = 0.0f;
+
+    /** Where he was placed, before the seat offsets moved him onto the furniture. */
+    FVector StandingLocation = FVector::ZeroVector;
+
+    /** True once the sit clips have been checked against THIS mesh. An NPC whose
+        skeleton cannot play them stays standing rather than striking a broken
+        pose -- the same guard DwmValleyLifeDirector applies for Maria. */
+    bool bSeatedAnimationsUsable = false;
+
+    /** Nearest actor within SeatSearchRadius whose static mesh matches SeatMeshNameFilter.
+        Null when nothing matches, in which case he sits where he was placed. */
+    AActor* FindSeatActor() const;
+
+    /** Loads and skeleton-checks the sit clips, and seats him if they are usable. */
+    void BeginSeated();
+
+    /** Starts the get-up clip. Safe to call when not seated -- it does nothing. */
+    void StandUpForPlayer(APawn* Greeter);
 
     /** Degrees from the ACTOR's +X to where the character visually looks.
 
