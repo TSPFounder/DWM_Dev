@@ -34,6 +34,10 @@ struct FDwmDialogueProxySource
 	const TCHAR* ActorLabel;
 	AActor* SourceActor = nullptr;
 	ADwmNpcActor* ExistingNpc = nullptr;
+
+	/** Set once an actor labelled EXACTLY with ActorToken has claimed this source, so
+	    a later loose name match cannot displace it. */
+	bool bExactLabelMatch = false;
 };
 const TCHAR* const* GetDwmCrowdIdleAnimationPaths(int32& OutCount)
 {
@@ -194,9 +198,39 @@ void BootstrapDialogueProxyNpcs(
 		}
 
 		const FString Identity = GetDwmBootstrapIdentity(Actor);
+
+		// An EXACT label match beats an incidental one buried in the object name.
+		//
+		// GetName() keeps the name the actor was created with, so a Blueprint class
+		// BP_Kai2 still answers to "Kai" long after its label has been changed to
+		// something else. Relabelling the old actor therefore does NOT retire it, and
+		// since iteration order is arbitrary the stale one can win over a purpose-placed
+		// replacement. Deliberately labelling an actor is the clearest statement of
+		// intent available, so it takes precedence.
+#if WITH_EDITOR
+		const FString Label = Actor->GetActorLabel();
+#else
+		const FString Label = Actor->GetName();
+#endif
+
 		for (FDwmDialogueProxySource& Source : Sources)
 		{
-			if (!Source.SourceActor && Identity.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
+			if (Label.Equals(Source.ActorToken, ESearchCase::IgnoreCase))
+			{
+				if (Source.SourceActor && Source.SourceActor != Actor)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[%s] '%s' is labelled '%s' exactly; using it instead of '%s'."),
+						LogPrefix, *GetNameSafe(Actor), Source.ActorToken,
+						*GetNameSafe(Source.SourceActor));
+				}
+				Source.SourceActor = Actor;
+				Source.bExactLabelMatch = true;
+				break;
+			}
+
+			if (!Source.SourceActor && !Source.bExactLabelMatch
+				&& Identity.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
 			{
 				Source.SourceActor = Actor;
 				break;
@@ -214,6 +248,10 @@ void BootstrapDialogueProxyNpcs(
 
 		if (Source.SourceActor && Source.ExistingNpc)
 		{
+			// The proxy is invisible; the placed Blueprint is what the player sees.
+			// Without this link, seating the proxy seats nobody -- which is why Mike
+			// stayed standing in the City while the log said he was seated.
+			Source.ExistingNpc->SetVisualSourceActor(Source.SourceActor);
 			Source.ExistingNpc->SetActorTransform(Source.SourceActor->GetActorTransform());
 			Source.ExistingNpc->SetActorEnableCollision(true);
 			continue;
@@ -232,6 +270,11 @@ void BootstrapDialogueProxyNpcs(
 			if (NewNpc)
 			{
 				NewNpc->ConfigureDialogueProxy(Source.Profile);
+
+				// BEFORE FinishSpawning, which is what runs BeginPlay. The seated setup
+				// happens there, so a link established afterwards arrives too late and the
+				// proxy seats itself instead of the Blueprint the player can see.
+				NewNpc->SetVisualSourceActor(Source.SourceActor);
 				NewNpc->FinishSpawning(SourceTransform);
 #if WITH_EDITOR
 				NewNpc->SetActorLabel(Source.ActorLabel);

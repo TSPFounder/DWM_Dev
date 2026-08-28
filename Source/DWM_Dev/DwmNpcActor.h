@@ -84,7 +84,10 @@ enum class EDwmNpcActivity : uint8
     Seated          UMETA(DisplayName = "Seated"),
 
     /** Playing the get-up clip, on the way from Seated to standing. */
-    StandingUp      UMETA(DisplayName = "Standing Up")
+    StandingUp      UMETA(DisplayName = "Standing Up"),
+
+    /** Walking a few steps toward the player who has just come in. */
+    ApproachingPlayer UMETA(DisplayName = "Approaching Player")
 };
 
 UCLASS()
@@ -261,6 +264,33 @@ public:
     // and a background character who stays put is the obvious next use.
     // ------------------------------------------------------------------
 
+    /** Walk a few steps toward the player when they come into view.
+
+        Uses the same proximity-and-line-of-sight test as the seated greeting, so
+        he waits until the player is actually in the room rather than reacting
+        through a wall. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Greeting")
+    bool bApproachesPlayer = false;
+
+    /** How far he will walk in total -- "a few steps", not across the room. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Greeting")
+    float ApproachDistance = 200.0f;
+
+    /** How close he is willing to get. Kept outside arm's reach so he does not end
+        up standing inside the player. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Greeting")
+    float ApproachStopDistance = 220.0f;
+
+    /** Where the approach began, for measuring how far he has come. */
+    FVector ApproachStartLocation = FVector::ZeroVector;
+
+    /** ONE-SHOT. Without this he re-greets every time the player leaves and
+        returns, following them around the room. */
+    bool bHasApproachedPlayer = false;
+
+    /** Runs the approach check and the walk itself. */
+    void TickApproach(float DeltaSeconds);
+
     /** Start the level sitting rather than standing. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     bool bStartsSeated = false;
@@ -276,9 +306,37 @@ public:
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     float SeatedHeightOffset = 0.0f;
 
-    /** Distance moved back into the seat while seated, along the placed facing. */
+    /** How far onto the cushion he sits, as a fraction of the seat's measured
+        half-depth. Zero puts him at the furniture's ORIGIN, which is the centre of the
+        whole mesh -- backrest included -- and is why the first attempt sank him into
+        the back of the couch. Hips belong forward of that. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatDepthFraction = 0.45f;
+
+    /** Manual trim on top of the measured depth. POSITIVE IS FORWARD, toward the front
+        edge of the seat. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     float SeatedForwardOffset = 0.0f;
+
+    /** Exact name of the seat actor, when a specific one is wanted.
+
+        Takes precedence over the filters below and ignores distance. The nearest
+        match is a fine heuristic on a sofa in an empty room and a poor one in an
+        office with several chairs: Owen was seated correctly, just on the wrong
+        chair, which from the doorway looked like he had vanished. Empty = search by
+        filter. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    FString SeatActorName;
+
+    /** Measure seat distance from THIS actor rather than from the NPC.
+
+        "Nearest chair to me" is useless when the NPC itself is in the wrong place --
+        a character pasted in from another level keeps that level's coordinates, so
+        every distance is measured from the wrong origin. Anchoring to a fixed piece
+        of furniture ("the chair nearest the desk") is stable no matter where the
+        character happens to have been dropped. Matched by label, then by name. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    FString SeatAnchorActorName;
 
     /** Substrings matched against nearby static mesh assets to find the furniture to sit
         on. Follows DwmValleyLifeDirector, which locates Maria's chair by "SM_RockingChair"
@@ -295,6 +353,13 @@ public:
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     float SeatSearchRadius = 1200.0f;
 
+    /** How much wider apart they stand than they sat, as a multiple of
+        SeatLateralOffset. Seated they share a couch; standing they need room for the
+        player to address one without the other's interaction sphere claiming the
+        prompt. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float StandLateralSpread = 2.2f;
+
     /** Sideways shift along the seat, so two people sharing one couch do not stack in
         the same cushion. Negative is to the seat's left. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
@@ -307,18 +372,49 @@ public:
         separated them across the couch's DEPTH instead of along its length, stacking
         them. One angle fixes both.
 
+        90 for SM_Sofa, whose +X runs ALONG the couch: the log reports the placed sofa
+        at yaw 0, and a sitter faces +Y. This is about the FURNITURE and is unrelated to
+        CopiedMeshFacingYawOffset, which is about the mesh -- see the note there about
+        why the two look interchangeable on this particular couch and are not.
+
+        Getting this wrong does more than turn them: the lateral offset is perpendicular
+        to the facing, so at 0 they stood off the END of the couch, one of them in the
+        wall, separated along the couch depth instead of its length.
+
         Override live with the DWM.Seat.YawOffset console variable; these NPCs are
         spawned at runtime, so there is no placed instance to edit. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     float SeatYawOffset = 90.0f;
 
-    /** How far in front of the seat he ends up once he stands, so he is not left
-        standing inside the couch. */
+    /** Gap between the FRONT EDGE of the seat and where he stands.
+
+        Added to the seat's measured half-depth rather than used as the whole
+        distance: a flat 70 units from the couch's centre is still inside the couch,
+        which is why they stood up merged with it and were then shoved out by
+        collision. Measuring means this cannot be wrong for a different sofa. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
-    float StandClearance = 70.0f;
+    float StandClearance = 55.0f;
 
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     UAnimSequence* SitIdleAnimation = nullptr;
+
+    /** Seated idles to choose from, as asset paths.
+
+        Per-NPC because the right clip depends on the furniture. The desk-bound clips
+        in this pack mime working at a surface: nonsense on a couch, exactly right for
+        someone sitting behind a computer. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    TArray<FString> SeatedIdleCandidates = {
+        TEXT("/Game/Office_Desk/Animation/Root_Motion/Office_Desk_Sit_Idle.Office_Desk_Sit_Idle"),
+        TEXT("/Game/Office_Desk/Animation/Root_Motion/Office_Desk_Bored_Idle.Office_Desk_Bored_Idle")
+    };
+
+    /** Someone who sits for the whole scene rather than rising to greet anyone.
+
+        Such an NPC keeps the seated clip through DIALOGUE as well. BeginDialogue sets
+        the Talking activity, which otherwise selects a standing clip -- and would lift
+        him out of his chair to speak and drop him back afterwards. */
+    bool IsPermanentSitter() const { return bStartsSeated && !bStandsForPlayer; }
 
     /** Seconds to wait after noticing the player before getting up.
 
@@ -330,6 +426,18 @@ public:
     /** Counts down StandDelay once the player has been noticed. Negative = not armed. */
     float PendingStandTimer = -1.0f;
 
+    /** The exact mesh COMPONENT sat on, which is not always the whole actor.
+
+        BP_Desk bundles the desk and its chair into one Blueprint, so measuring the
+        ACTOR gives the midpoint of desk-plus-chair and seats the character at the
+        wrong height. The component that actually matched the filter is the chair. */
+    TWeakObjectPtr<UStaticMeshComponent> SeatComponent;
+
+    /** The furniture he is sitting on. Held so the visibility trace can IGNORE it: a
+        seated NPC is inside the couch's bounds, so the couch itself blocks the trace
+        and he never notices the player and never stands. */
+    TWeakObjectPtr<AActor> SeatActor;
+
     /** Who the pending stand is for. */
     TWeakObjectPtr<APawn> PendingStandTarget;
 
@@ -338,8 +446,19 @@ public:
         other then started at frame zero on every actor. */
     bool bSeatedIdleRandomised = false;
 
-    /** Picks one of several compatible seated idles, so two people on a couch are not
-        merely offset within the SAME motion but actually doing different things. */
+    /** Choose RANDOMLY among the usable seated idles rather than taking the first.
+
+        Off by default, so SeatedIdleCandidates reads as a PRIORITY LIST: the
+        preferred clip first, later entries only as fallbacks if the rig cannot play
+        it. Picking at random made "fallback" a coin flip -- Mike drew a desk idle on
+        one run and the bench clip on the next.
+
+        On for the pair sharing the Hillside couch, where variety is the point. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bRandomiseSeatedIdle = false;
+
+    /** Picks a compatible seated idle: the first usable one, or a random one when
+        bRandomiseSeatedIdle is set. */
     UAnimSequence* PickVariedSitIdle() const;
 
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
@@ -401,9 +520,83 @@ public:
         pose -- the same guard DwmValleyLifeDirector applies for Maria. */
     bool bSeatedAnimationsUsable = false;
 
-    /** Nearest actor within SeatSearchRadius whose static mesh matches SeatMeshNameFilter.
-        Null when nothing matches, in which case he sits where he was placed. */
-    AActor* FindSeatActor() const;
+    /** Nearest actor within SeatSearchRadius whose static mesh matches a seat filter.
+        Null when nothing matches, in which case he sits where he was placed.
+
+        OutSeatComponent receives the mesh component that actually matched -- the chair
+        inside BP_Desk rather than the whole desk-and-chair Blueprint. Returned rather
+        than assigned to a member so this can stay const. */
+    AActor* FindSeatActor(UStaticMeshComponent*& OutSeatComponent) const;
+
+    /** The placed Blueprint this NPC speaks for, when it is only a dialogue proxy.
+
+        Hillside copies the placed mesh onto the NPC actor, so the actor IS the visible
+        character. The City keeps the Blueprint visible and spawns an invisible proxy
+        beside it -- so seating the actor there seats nobody the player can see. Held so
+        the seated pose can be driven onto the actual visual. */
+    TWeakObjectPtr<AActor> VisualSourceActor;
+
+    /** Change the visual's POSE without moving it.
+
+        For someone already placed in their seat: Kai is at her desk in the right spot
+        and only needs a different clip, whereas Mike is standing and has to be put on
+        the couch as well. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bSeatVisualInPlace = false;
+
+    /** Drop the visual onto the floor at startup.
+
+        The placed Blueprints sit slightly above the ground in the level, so they read
+        as levitating. Corrected at runtime by measuring where the character's FEET
+        are -- the bottom of its bounds -- rather than assuming the actor origin is at
+        floor level, which differs between a Character (capsule centre) and a plain
+        actor with a mesh (usually the feet).
+
+        Skipped for anyone seated in place: Kai is on a chair, and "ground" is the
+        wrong reference for her. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC")
+    bool bSnapVisualToGround = true;
+
+    /** Hold a single frame of the seated clip instead of looping it.
+
+        The Office_Desk seated idles are authored for someone AT A DESK and fidget
+        with their hands, which is what still read as typing on Kai even after her
+        body accepted the clip. Freezing gives a still seated pose -- the honest way
+        to get "just sitting there" out of a clip that was never still. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    bool bFreezeSeatedPose = false;
+
+    /** Which frame to hold, in seconds. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    float SeatedPoseFreezeTime = 0.5f;
+
+    /** Puts the linked visual's feet on the floor. */
+    void SnapVisualToGround();
+
+public:
+    /** Links this proxy to the placed Blueprint it speaks for. */
+    void SetVisualSourceActor(AActor* InVisual) { VisualSourceActor = InVisual; }
+
+protected:
+    /** Plays a clip on the linked visual's meshes. Returns false when nothing on it can
+        play the clip. Every pose the player sees on a proxy-backed NPC goes through
+        here -- sitting, getting up, and standing idle alike. */
+    bool ApplyClipToVisual(UAnimSequence* Clip, bool bLooping, bool bFreeze);
+
+    /** Plays the seated clip on the visual's meshes. */
+    bool ApplySeatedPoseToVisual();
+
+    /** Height of the visual's animated mesh above its actor origin.
+
+        A plain actor with a skeletal mesh has this at zero -- root at the feet -- but
+        a Character puts its origin at the CAPSULE CENTRE, about 88 cm up, with the
+        mesh pushed back down beneath it. Seating such an actor by its origin buries
+        it: the pose ends up a capsule half-height below the cushion. */
+    float GetVisualMeshHeightOffset() const;
+
+    /** Copies the proxy's transform onto the visual, so movement and facing the proxy
+        performs are actually seen. */
+    void SyncVisualTransform();
 
     /** Loads and skeleton-checks the sit clips, and seats him if they are usable. */
     void BeginSeated();
@@ -423,11 +616,22 @@ public:
         rather than the actor's bare +X. */
     float MeshFacingYawOffset = 0.0f;
 
-    /** The offset applied to a copied mesh. Defaults to the same +Y-authored
-        convention the constructor documents for the Hank asset. The Hillside
-        characters come from a different pack, so this is EditAnywhere: if that pack
-        is authored to another convention, correcting it is a value change here, not
-        a code change. */
+    /** The offset applied to a copied mesh: 90, the same +Y-authored convention the
+        constructor documents for the Hank asset.
+
+        MEASURED, not assumed. With this at 0 the log showed actorYaw=118 against
+        playerYaw=118 -- the actor aimed exactly at the player -- while the character
+        visibly faced a quarter turn away. An actor that is correct while the character
+        is not IS this offset, and it can only be 90.
+
+        It is easy to mistake this for a redundant pair with SeatYawOffset, because the
+        Hillside couch happens to sit at yaw 0 and both (0 + 90 - 90) and (0 + 0 - 0)
+        leave a seated NPC at actor yaw 0. They are INDEPENDENT: this one describes the
+        mesh, that one describes the furniture. Zeroing both looks fine seated and is
+        wrong the moment anyone turns.
+
+        Still EditAnywhere: a pack authored to another convention is a value change
+        here rather than a code change. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC")
     float CopiedMeshFacingYawOffset = 90.0f;
 

@@ -188,30 +188,63 @@ void ADWM_DevCharacter::HandlePrimaryInteraction()
 	// dialogue remains usable even when that overlap handoff is missed. Three and a
 	// half metres is intentionally only a little larger than Hank's visible prompt
 	// radius and is too short to select him accidentally from elsewhere in Mountain.
-	if (!ActiveNpc.IsValid())
+	// ALWAYS re-resolve, not only when nothing is set.
+	//
+	// SetActiveNpc is last-writer-wins, so with two NPCs in range -- two people on one
+	// couch -- whichever fired its overlap LAST owned the prompt regardless of who the
+	// player walked up to. Approaching Sophia and getting Nathan looks exactly like the
+	// two of them having swapped dialogue, which is how it was reported.
 	{
 		constexpr float NpcInteractionFallbackRadius = 350.0f;
 		const float MaxDistanceSquared = FMath::Square(NpcInteractionFallbackRadius);
+
+		// Whoever the player is LOOKING AT, not whoever is marginally closer. Two people
+		// sitting side by side are at nearly equal distance, so distance alone cannot tell
+		// them apart -- but the camera is aimed squarely at one of them.
+		const FVector ViewForward = GetControlRotation().Vector();
+		ADwmNpcActor* BestNpc = nullptr;
+		float BestAlignment = -2.0f;
 		float BestDistanceSquared = MaxDistanceSquared;
-		ADwmNpcActor* NearestNpc = nullptr;
 
 		for (TActorIterator<ADwmNpcActor> It(GetWorld()); It; ++It)
 		{
 			ADwmNpcActor* Candidate = *It;
-			const float DistanceSquared = FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation());
-			if (DistanceSquared <= BestDistanceSquared)
+			if (!Candidate)
 			{
+				continue;
+			}
+
+			FVector ToCandidate = Candidate->GetActorLocation() - GetActorLocation();
+			const float DistanceSquared = ToCandidate.SizeSquared();
+			if (DistanceSquared > MaxDistanceSquared)
+			{
+				continue;
+			}
+
+			ToCandidate.Z = 0.0f;
+			const float Alignment = ToCandidate.IsNearlyZero()
+				? 1.0f
+				: FVector::DotProduct(ToCandidate.GetSafeNormal(), ViewForward);
+
+			// Distance only breaks ties between two the player is aimed at equally.
+			if (Alignment > BestAlignment + KINDA_SMALL_NUMBER
+				|| (FMath::IsNearlyEqual(Alignment, BestAlignment) && DistanceSquared < BestDistanceSquared))
+			{
+				BestAlignment = Alignment;
 				BestDistanceSquared = DistanceSquared;
-				NearestNpc = Candidate;
+				BestNpc = Candidate;
 			}
 		}
 
-		if (NearestNpc)
+		if (BestNpc)
 		{
-			ActiveNpc = NearestNpc;
-			UE_LOG(LogTemplateCharacter, Log,
-				TEXT("[DWM Interaction] Resolved nearby NPC '%s' at %.0f cm after overlap handoff was missed."),
-				*GetNameSafe(NearestNpc), FMath::Sqrt(BestDistanceSquared));
+			if (BestNpc != ActiveNpc.Get())
+			{
+				UE_LOG(LogTemplateCharacter, Log,
+					TEXT("[DWM Interaction] Talking to '%s' at %.0f cm (aim %.2f), not the last NPC to overlap."),
+					*GetNameSafe(BestNpc), FMath::Sqrt(BestDistanceSquared), BestAlignment);
+			}
+			ActiveNpc = BestNpc;
 		}
 	}
 
