@@ -118,10 +118,20 @@ ADwmValleyLifeDirector::ADwmValleyLifeDirector()
              "Office_Desk_Stand_To_Sit.Office_Desk_Stand_To_Sit"));
     MariaStandToSitAnimation = StandToSitFinder.Object;
 
+    // A relaxed BENCH sit, the same clip Kai uses, rather than the office desk idle
+    // that poses the hands forward on a keyboard -- nonsense in a rocking chair, and
+    // the "typing" the issue reports.
     static ConstructorHelpers::FObjectFinder<UAnimSequence> SitIdleFinder(
+        TEXT("/Game/Park_2/Animation/"
+             "PRK_Bench_Sit_Relax_01.PRK_Bench_Sit_Relax_01"));
+    MariaSitIdleAnimation = SitIdleFinder.Object;
+
+    // Kept as the fallback: if her rig cannot play the bench clip, a desk idle in a
+    // rocking chair still beats no seated pose at all.
+    static ConstructorHelpers::FObjectFinder<UAnimSequence> SitIdleFallbackFinder(
         TEXT("/Game/Office_Desk/Animation/Root_Motion/"
              "Office_Desk_Sit_Idle.Office_Desk_Sit_Idle"));
-    MariaSitIdleAnimation = SitIdleFinder.Object;
+    MariaSitIdleFallbackAnimation = SitIdleFallbackFinder.Object;
 
     static ConstructorHelpers::FObjectFinder<UAnimSequence> ChickenIdle1Finder(
         TEXT("/Game/FarmAnimalsPack/Chicken/Animations/"
@@ -278,14 +288,26 @@ void ADwmValleyLifeDirector::DiscoverValleyActors()
 
     if (RockingChairActor)
     {
-        const FVector ChairForward = RockingChairActor->GetActorForwardVector();
-        MariaSeatLocation =
-            RockingChairActor->GetActorLocation() - ChairForward * MariaSeatForwardOffset;
-        MariaSeatLocation.Z += MariaSeatHeightOffset;
-        MariaApproachLocation = MariaSeatLocation + ChairForward * MariaApproachDistance;
+        // ROTATION FIRST, because the direction out of the seat is derived from it.
+        //
+        // Aim the CHARACTER at the chair's facing rather than the actor's bare +X:
+        // without this she sits square in a chair pointing ninety degrees away from
+        // her (issue #33).
         MariaSeatRotation = RockingChairActor->GetActorRotation();
         MariaSeatRotation.Pitch = 0.0f;
         MariaSeatRotation.Roll = 0.0f;
+        MariaSeatRotation.Yaw -= MariaFacingYawOffset;
+
+        // The chair's own forward vector runs ACROSS the seat, not out of it, so
+        // offsetting along it slid her out sideways instead of forward. Deriving the
+        // direction from the corrected seat rotation means the way she sits and the
+        // way she is nudged forward can never disagree -- they come from one number.
+        const FVector SitForward = MariaSeatRotation.Vector();
+
+        MariaSeatLocation =
+            RockingChairActor->GetActorLocation() + SitForward * MariaSeatForwardOffset;
+        MariaSeatLocation.Z += MariaSeatHeightOffset;
+        MariaApproachLocation = MariaSeatLocation + SitForward * MariaApproachDistance;
     }
 }
 
@@ -395,8 +417,14 @@ void ADwmValleyLifeDirector::TickMariaRoutine(float DeltaSeconds)
         {
             MariaMesh->PlayAnimation(MariaSitIdleAnimation, true);
         }
+        else if (CanPlayOnMaria(MariaSitIdleFallbackAnimation))
+        {
+            MariaMesh->PlayAnimation(MariaSitIdleFallbackAnimation, true);
+        }
         else if (MariaRelaxedIdleAnimation)
         {
+            // Last resort: a STANDING idle in a chair, which at least keeps her
+            // posed rather than dropping her into a T-pose.
             MariaMesh->PlayAnimation(MariaRelaxedIdleAnimation, true);
         }
     }
@@ -434,8 +462,14 @@ void ADwmValleyLifeDirector::SeatMaria()
         {
             MariaMesh->PlayAnimation(MariaSitIdleAnimation, true);
         }
+        else if (CanPlayOnMaria(MariaSitIdleFallbackAnimation))
+        {
+            MariaMesh->PlayAnimation(MariaSitIdleFallbackAnimation, true);
+        }
         else if (MariaRelaxedIdleAnimation)
         {
+            // Last resort: a STANDING idle in a chair, which at least keeps her
+            // posed rather than dropping her into a T-pose.
             MariaMesh->PlayAnimation(MariaRelaxedIdleAnimation, true);
         }
         UE_LOG(LogTemp, Warning,

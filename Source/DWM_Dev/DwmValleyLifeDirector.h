@@ -76,6 +76,10 @@ private:
     UPROPERTY()
     UAnimSequence* MariaSitIdleAnimation = nullptr;
 
+    /** Used only if her rig cannot play MariaSitIdleAnimation. */
+    UPROPERTY()
+    UAnimSequence* MariaSitIdleFallbackAnimation = nullptr;
+
     UPROPERTY()
     TArray<UAnimSequence*> ChickenAnimations;
 
@@ -93,12 +97,28 @@ private:
         hand against an office chair -- a rocking chair will likely want different
         ones, which is the point of making them editable. */
     UPROPERTY(EditAnywhere, Category = "DWM|Valley")
-    float MariaSeatForwardOffset = 8.0f;
+    float MariaSeatForwardOffset = 25.0f;
 
     /** BP_Morphpose_Maria's mesh is authored 90cm below its Character origin, so a
         seat position has to be raised by that much to land the mesh on the seat. */
     UPROPERTY(EditAnywhere, Category = "DWM|Valley")
     float MariaSeatHeightOffset = 90.0f;
+
+    /** Degrees from the chair's facing to the actor yaw that makes Maria face the
+        same way.
+
+        Her seat rotation was taken straight from the rocking chair, which assumes
+        the character mesh looks along the actor's +X. It does not -- this pack is
+        authored facing +Y -- so she sat square in a chair pointing ninety degrees
+        away from her (issue #33). The seated NPCs on ADwmNpcActor carry the same
+        correction as MeshFacingYawOffset; this director predates that and never had
+        one.
+
+        NEGATIVE ninety, arrived at by measurement: raw chair rotation sat her ninety
+        degrees off, -90 put her a further ninety out (180 from correct), so the
+        correction runs the other way. EditAnywhere so it stays adjustable. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Valley")
+    float MariaFacingYawOffset = -90.0f;
 
     /** How far in front of the seat she stops before the sit transition begins.
         Wants to match roughly how far the stand-to-sit clip travels backward, or
