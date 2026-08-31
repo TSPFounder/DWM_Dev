@@ -218,6 +218,18 @@ private:
     bool ApplySavedCharacterAppearance(UObject* CharacterObject);
     /** True only for Labgames' intermediate three-dimensional transition map. */
     bool IsLevelTransitionWorld() const;
+
+    /** Point every level-transition trigger at DWM copy instead of the pack's demo.
+
+        BP_ChangeLevel_Updated writes Use Custom Container / Custom Container into the
+        LT_SG save BEFORE travelling, so the container is chosen in the ORIGIN level.
+        Anything done in the transition world itself is already too late -- which is
+        what three earlier attempts there discovered the hard way.
+
+        Setting these per trigger is the pack's own supported route; its boilerplate
+        says to do it "via the details panel". Doing it in code covers every trigger
+        and cannot be lost when a level is re-saved. */
+    void ApplyTransitionTriggerContainers();
     /** Places the gameplay pawn at the arrival marker for the map it travelled from. */
     void ApplyRouteSpecificTransitionArrival();
     /** Returns the stable short map name without PIE's UEDPIE prefix. */
