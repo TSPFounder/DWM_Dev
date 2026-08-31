@@ -97,7 +97,24 @@ private:
     UPROPERTY(VisibleAnywhere, Category = "DWM|Economy")
     UTextRenderComponent* TerminalLabel;
 
+    /** Height of the floating label, in world units.
+
+        5.6, down from the original 28: at full size the trade text hung over Kai and
+        read as a sign about him rather than a label on the terminal beside him
+        (issue #48). Exposed so it can be tuned per placed instance. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Economy")
+    float LabelWorldSize = 5.6f;
+
+    /** Turn the label to face the player each frame.
+
+        It was fixed at 180 degrees of yaw, which only reads from one side; walk
+        round the desk and it is edge-on or mirrored. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Economy")
+    bool bLabelFacesPlayer = true;
+
 public:
+    virtual void Tick(float DeltaSeconds) override;
+
     /** Hide the cube and its floating label while leaving the terminal usable.
 
         The visuals are a Day 18 debugging aid -- a grey box with text floating over
