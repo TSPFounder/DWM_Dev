@@ -608,6 +608,10 @@ void UDwmGameInstance::InitializeWorldRuntime()
     SpawnWorldActors();
     RefreshEconomyState();
 
+    // Here, in the COMMUNITY level, because the trigger packages its container into
+    // the save before travelling -- doing this in the transition world is too late.
+    ApplyTransitionTriggerContainers();
+
     // The terminal is positioned relative to the gameplay pawn, which is not guaranteed to
     // exist during Init(). Deferring one tick keeps the trigger in the loaded world.
     World->GetTimerManager().SetTimerForNextTick(
@@ -2127,6 +2131,98 @@ bool UDwmGameInstance::ApplySavedCharacterAppearance(UObject* CharacterObject)
     UE_LOG(LogTemp, Log, TEXT("[DWM Transition] Applied captured player appearance '%s' to the transition display."),
         *LoadedName.ToString());
     return bAppliedAppearance;
+}
+
+namespace
+{
+    /** Lowercased with spaces and underscores stripped, so "Load Custom Container",
+        "LoadCustomContainer" and "Load_Custom_Container" all compare equal. */
+    FString DwmNormalisePropertyName(const FString& In)
+    {
+        return In.Replace(TEXT(" "), TEXT("")).Replace(TEXT("_"), TEXT("")).ToLower();
+    }
+}
+
+void UDwmGameInstance::ApplyTransitionTriggerContainers()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    const FText DwmHeader = NSLOCTEXT("DWM", "TransitionHeader", "Dream World Maker");
+    const FText DwmInfo = NSLOCTEXT("DWM", "TransitionInfo",
+        "On the road between communities. What each one builds, the others depend on.");
+
+    int32 TriggersConfigured = 0;
+
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Trigger = *It;
+        if (!Trigger || !Trigger->GetClass()->GetPathName().Contains(TEXT("BP_ChangeLevel")))
+        {
+            continue;
+        }
+
+        bool bFlagSet = false;
+        bool bTextSet = false;
+
+        // "Load Custom Container" / "Use Custom Container" -- either name, both mean
+        // "show mine instead of a random demo one".
+        for (TFieldIterator<FBoolProperty> BoolIt(Trigger->GetClass()); BoolIt; ++BoolIt)
+        {
+            const FString Name = DwmNormalisePropertyName(BoolIt->GetName());
+            if (Name.Contains(TEXT("customcontainer")))
+            {
+                BoolIt->SetPropertyValue_InContainer(Trigger, true);
+                bFlagSet = true;
+            }
+        }
+
+        for (TFieldIterator<FStructProperty> StructIt(Trigger->GetClass()); StructIt; ++StructIt)
+        {
+            if (!DwmNormalisePropertyName(StructIt->GetName()).Contains(TEXT("customcontainer")))
+            {
+                continue;
+            }
+
+            void* ContainerMemory = StructIt->ContainerPtrToValuePtr<void>(Trigger);
+            for (TFieldIterator<FTextProperty> TextIt(StructIt->Struct); TextIt; ++TextIt)
+            {
+                const FString FieldName = TextIt->GetName();
+                if (FieldName.StartsWith(TEXT("Header")))
+                {
+                    TextIt->SetPropertyValue_InContainer(ContainerMemory, DwmHeader);
+                    bTextSet = true;
+                }
+                else if (FieldName.StartsWith(TEXT("Info")))
+                {
+                    TextIt->SetPropertyValue_InContainer(ContainerMemory, DwmInfo);
+                    bTextSet = true;
+                }
+            }
+        }
+
+        if (bFlagSet && bTextSet)
+        {
+            ++TriggersConfigured;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM Transition] '%s' exposes no %s; leaving the pack's demo copy."),
+                *GetNameSafe(Trigger),
+                bFlagSet ? TEXT("custom container struct") : TEXT("custom container flag"));
+        }
+    }
+
+    if (TriggersConfigured > 0)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM Transition] Pointed %d transition trigger(s) at DWM copy."),
+            TriggersConfigured);
+    }
 }
 
 void UDwmGameInstance::SetupTransitionCharacterDisplay()
