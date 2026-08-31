@@ -17,7 +17,8 @@ namespace
 
 ADwmTradeTerminalActor::ADwmTradeTerminalActor()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    // Ticks only to keep the label turned toward the player; see Tick().
+    PrimaryActorTick.bCanEverTick = true;
 
     InteractionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionSphere"));
     SetRootComponent(InteractionSphere);
@@ -45,7 +46,7 @@ ADwmTradeTerminalActor::ADwmTradeTerminalActor()
     TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 145.0f));
     TerminalLabel->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
     TerminalLabel->SetHorizontalAlignment(EHTA_Center);
-    TerminalLabel->SetWorldSize(28.0f);
+    TerminalLabel->SetWorldSize(LabelWorldSize);
     TerminalLabel->SetTextRenderColor(FColor(255, 210, 60));
     // NOTE: the label's actual text is set in BeginPlay, not here -- Day 20 fields
     // (BuyerCommunityId/SellerCommunityId/ResourceId/etc.) are UPROPERTY EditAnywhere values
@@ -62,6 +63,10 @@ void ADwmTradeTerminalActor::BeginPlay()
     InteractionSphere->OnComponentEndOverlap.AddDynamic(this, &ADwmTradeTerminalActor::OnInteractionSphereEndOverlap);
 
     TerminalLabel->SetText(FText::FromString(FString::Printf(TEXT("%s\nPress T"), *BuildTradeDescription())));
+
+    // Re-applied here as well as in the constructor: a placed instance carries its own
+    // LabelWorldSize, and that value only exists once the instance has been loaded.
+    TerminalLabel->SetWorldSize(LabelWorldSize);
 }
 
 FString ADwmTradeTerminalActor::BuildTradeDescription() const
@@ -73,6 +78,40 @@ FString ADwmTradeTerminalActor::BuildTradeDescription() const
     // Auto-generated fallback when no flavor text is configured for this instance.
     return FString::Printf(TEXT("%s buys %.0f %s from %s for %.0f St"),
         *BuyerCommunityId, Quantity, *ResourceId, *SellerCommunityId, Amount);
+}
+
+void ADwmTradeTerminalActor::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!bLabelFacesPlayer || !TerminalLabel || TerminalLabel->bHiddenInGame)
+    {
+        return;
+    }
+
+    const APlayerController* PlayerController =
+        GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+    const APawn* PlayerPawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+    if (!PlayerPawn)
+    {
+        return;
+    }
+
+    FVector ToPlayer = PlayerPawn->GetActorLocation() - TerminalLabel->GetComponentLocation();
+    ToPlayer.Z = 0.0f;
+    if (ToPlayer.IsNearlyZero())
+    {
+        return;
+    }
+
+    // TOWARD the player. I first pointed it away, reasoning from the constructor's
+    // fixed 180 that the text reads along the component's -X; it came out mirrored,
+    // so it reads along +X and the forward belongs on the viewer.
+    //
+    // Yaw only -- a label that pitches to track someone on a staircase reads as
+    // broken, and this one sits on a desk.
+    const FRotator Facing = ToPlayer.Rotation();
+    TerminalLabel->SetWorldRotation(FRotator(0.0f, Facing.Yaw, 0.0f));
 }
 
 void ADwmTradeTerminalActor::SetVisualsHidden(bool bInHidden)
