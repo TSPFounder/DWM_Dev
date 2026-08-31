@@ -3190,6 +3190,9 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
 
     EDwmNpcProfile AnchorProfile = EDwmNpcProfile::Hank;
     bool bHasAnchorProfile = true;
+
+    // Set where the character does not stay put -- see the seat lookup below.
+    FString AnchorSeatMeshToken;
     if (MapString.Contains(TEXT("Hillside"), ESearchCase::IgnoreCase))
     {
         AnchorProfile = EDwmNpcProfile::Owen;
@@ -3197,6 +3200,7 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
     else if (MapString.Contains(TEXT("Valley"), ESearchCase::IgnoreCase))
     {
         AnchorProfile = EDwmNpcProfile::Maria;
+        AnchorSeatMeshToken = TEXT("RockingChair");
     }
     else if (MapString.Contains(TEXT("Suburb"), ESearchCase::IgnoreCase))
     {
@@ -3217,7 +3221,7 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         + (PlayerPawn->GetActorForwardVector() * 300.0f)
         + FVector(0.0f, 0.0f, -80.0f);
 
-    const ADwmNpcActor* AnchorNpc = nullptr;
+    const AActor* AnchorNpc = nullptr;
     if (bHasAnchorProfile)
     {
         for (TActorIterator<ADwmNpcActor> It(World); It; ++It)
@@ -3225,6 +3229,88 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
             if (*It && It->GetNpcProfile() == AnchorProfile)
             {
                 AnchorNpc = *It;
+                break;
+            }
+        }
+    }
+
+    // NOT EVERY CHARACTER IS AN ADwmNpcActor.
+    //
+    // Maria is a placed actor driven by DwmValleyLifeDirector, which finds her by her
+    // skeletal mesh name -- there is no NPC actor carrying her profile, so the search
+    // above finds nothing in Valley and the terminal falls back to the spot in front
+    // of the player. Invisible, that leaves it effectively unreachable.
+    //
+    // Fall back to matching the character by NAME across any actor with a skeletal
+    // mesh, the same identity idea the NPC bootstrap uses.
+    if (!AnchorNpc && bHasAnchorProfile)
+    {
+        const TCHAR* AnchorToken = TEXT("");
+        switch (AnchorProfile)
+        {
+        case EDwmNpcProfile::Owen:    AnchorToken = TEXT("Owen"); break;
+        case EDwmNpcProfile::Maria:   AnchorToken = TEXT("Maria"); break;
+        case EDwmNpcProfile::DeShawn: AnchorToken = TEXT("DeShawn"); break;
+        case EDwmNpcProfile::Hank:    AnchorToken = TEXT("Hank"); break;
+        default: break;
+        }
+
+        if (FCString::Strlen(AnchorToken) > 0)
+        {
+            for (TActorIterator<AActor> It(World); It; ++It)
+            {
+                AActor* Candidate = *It;
+                if (!Candidate || !Candidate->FindComponentByClass<USkeletalMeshComponent>())
+                {
+                    continue;
+                }
+
+                FString Identity = Candidate->GetName();
+#if WITH_EDITOR
+                Identity += TEXT(" ") + Candidate->GetActorLabel();
+#endif
+                // The mesh name too: the Valley director identifies Maria by
+                // SK_Maria_02 rather than by anything on the actor itself.
+                if (const USkeletalMeshComponent* Mesh =
+                        Candidate->FindComponentByClass<USkeletalMeshComponent>())
+                {
+                    Identity += TEXT(" ") + GetNameSafe(Mesh->GetSkeletalMeshAsset());
+                }
+
+                if (Identity.Contains(AnchorToken, ESearchCase::IgnoreCase))
+                {
+                    AnchorNpc = Candidate;
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[DWM Economy] Anchored the terminal to '%s' by name ('%s')."),
+                        *GetNameSafe(Candidate), AnchorToken);
+                    break;
+                }
+            }
+        }
+    }
+
+    // WHERE THEY END UP, not where they start.
+    //
+    // Maria walks to the rocking chair after spawn, and the actor carrying her
+    // profile is a dialogue proxy left at her starting point -- so anchoring to her
+    // put the terminal somewhere she never stands. The chair is the fixed thing; she
+    // comes to it, and it is where the trade narratively happens.
+    if (!AnchorSeatMeshToken.IsEmpty())
+    {
+        for (TActorIterator<AActor> It(World); It; ++It)
+        {
+            AActor* Candidate = *It;
+            const UStaticMeshComponent* MeshComp =
+                Candidate ? Candidate->FindComponentByClass<UStaticMeshComponent>() : nullptr;
+            const UStaticMesh* Asset = MeshComp ? MeshComp->GetStaticMesh() : nullptr;
+            if (Asset
+                && Asset->GetPathName().Contains(AnchorSeatMeshToken, ESearchCase::IgnoreCase))
+            {
+                AnchorNpc = Candidate;
+                UE_LOG(LogTemp, Log,
+                    TEXT("[DWM Economy] Anchored the terminal to '%s' (%s) instead of the ")
+                    TEXT("character, who moves to it."),
+                    *GetNameSafe(Candidate), *AnchorSeatMeshToken);
                 break;
             }
         }
