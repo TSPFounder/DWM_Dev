@@ -378,6 +378,14 @@ void ADwmNpcActor::PopulateHillsideDialogue()
         // The specific chair at the computer. Named outright because the room holds
         // several chairs and the nearest one was not his.
         SeatActorName = TEXT("SM_Chair2");
+
+        // Restores the height Owen had BEFORE the City work, exactly rather than by eye.
+        //
+        // That work moved the Z reference from the seat actor's LOCATION to the centre
+        // of its bounds, which Kai and Mike needed and Owen did not -- and he was never
+        // re-checked. His chair reports bounds centre 506.61 with extent 56.61, so its
+        // base -- the old reference -- is 450. The difference is the offset.
+        SeatedHeightOffset = -56.6f;
         SeatMeshNameFilters = { TEXT("ChairOffice"), TEXT("SM_Chair") };
 
         // Just sitting, NOT working. The desk clips (Computer_Idle, Laptop, Writing)
@@ -767,7 +775,12 @@ void ADwmNpcActor::Tick(float DeltaSeconds)
         // Turn to face whoever is talking to him. This is a response to an explicit E
         // press, not proximity-driven behavior -- he does not react to the player merely
         // standing nearby, which is the scope line SCOPE.md draws.
-        if (CurrentListener)
+        //
+        // A PERMANENT SITTER stays put. Owen is at a computer for the whole scene, and
+        // swivelling him to face the player turns him away from the desk he is meant to
+        // be working at -- the chair does not move with him, so it reads as the
+        // character spinning in place.
+        if (CurrentListener && !IsPermanentSitter())
         {
             FVector ToListener = CurrentListener->GetActorLocation() - GetActorLocation();
             ToListener.Z = 0.0f;
@@ -2685,7 +2698,14 @@ void ADwmNpcActor::EndDialogue()
 
     if (!bEnableScriptedMovement)
     {
-        SetActorRotation(HomeRotation);
+        // A permanent sitter returns to the SEAT facing, not the placed one.
+        //
+        // HomeRotation is where the level author dropped the actor, which is not
+        // where BeginSeated turned him to sit. Snapping him back to it at the end of
+        // a conversation swings Owen away from the desk he is meant to be working
+        // at -- the visible "he rotates when you press E".
+        const bool bUseSeatFacing = IsPermanentSitter() && bSeatedAnimationsUsable;
+        SetActorRotation(bUseSeatFacing ? SeatedRotation : HomeRotation);
     }
 }
 
