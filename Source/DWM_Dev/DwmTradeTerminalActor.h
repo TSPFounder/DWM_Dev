@@ -96,4 +96,15 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "DWM|Economy")
     UTextRenderComponent* TerminalLabel;
+
+public:
+    /** Hide the cube and its floating label while leaving the terminal usable.
+
+        The visuals are a Day 18 debugging aid -- a grey box with text floating over
+        it. A terminal standing where the trade actually happens does not need them,
+        and the placed City instance on Kai's desk already reads correctly without one.
+
+        Deliberately does NOT touch the interaction sphere: this changes what is drawn,
+        not what can be walked up to and pressed E on. */
+    void SetVisualsHidden(bool bInHidden);
 };
