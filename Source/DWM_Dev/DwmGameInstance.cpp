@@ -8,6 +8,7 @@
 #include "DwmPendulumActor.h"
 #include "DwmEconomyWriter.h"
 #include "DwmTradeTerminalActor.h"
+#include "DwmNpcActor.h"
 #include "Engine/Engine.h"
 #include "Engine/DataTable.h"
 #include "Engine/PointLight.h"
@@ -3180,9 +3181,74 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         return;
     }
 
-    const FVector SpawnLocation = PlayerPawn->GetActorLocation()
+    // Stand the terminal beside the person the trade is with, not three metres in
+    // front of wherever the player happens to be looking (issue #6).
+    //
+    // Anchored to the NPC at spawn rather than repositioned in the level files, so
+    // it follows whoever the level actually places and cannot drift out of sync.
+    const FString MapString = GetStableMapName(World).ToString();
+
+    EDwmNpcProfile AnchorProfile = EDwmNpcProfile::Hank;
+    bool bHasAnchorProfile = true;
+    if (MapString.Contains(TEXT("Hillside"), ESearchCase::IgnoreCase))
+    {
+        AnchorProfile = EDwmNpcProfile::Owen;
+    }
+    else if (MapString.Contains(TEXT("Valley"), ESearchCase::IgnoreCase))
+    {
+        AnchorProfile = EDwmNpcProfile::Maria;
+    }
+    else if (MapString.Contains(TEXT("Suburb"), ESearchCase::IgnoreCase))
+    {
+        AnchorProfile = EDwmNpcProfile::DeShawn;
+    }
+    else if (MapString.Contains(TEXT("Mountain"), ESearchCase::IgnoreCase))
+    {
+        // Not named in the request, but the issue lists Mountain and Hank is the only
+        // NPC there -- better beside him than a cube in front of the player.
+        AnchorProfile = EDwmNpcProfile::Hank;
+    }
+    else
+    {
+        bHasAnchorProfile = false;
+    }
+
+    FVector SpawnLocation = PlayerPawn->GetActorLocation()
         + (PlayerPawn->GetActorForwardVector() * 300.0f)
         + FVector(0.0f, 0.0f, -80.0f);
+
+    const ADwmNpcActor* AnchorNpc = nullptr;
+    if (bHasAnchorProfile)
+    {
+        for (TActorIterator<ADwmNpcActor> It(World); It; ++It)
+        {
+            if (*It && It->GetNpcProfile() == AnchorProfile)
+            {
+                AnchorNpc = *It;
+                break;
+            }
+        }
+    }
+
+    if (AnchorNpc)
+    {
+        // BESIDE them, not on top of them, so the terminal's trigger and the NPC's
+        // own interaction range are not exactly co-located -- E has to be able to
+        // tell the two apart.
+        SpawnLocation = AnchorNpc->GetActorLocation()
+            + AnchorNpc->GetActorRightVector() * 120.0f;
+
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM Economy] Trade terminal placed beside '%s' at %s."),
+            *GetNameSafe(AnchorNpc), *SpawnLocation.ToCompactString());
+    }
+    else if (bHasAnchorProfile)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM Economy] No NPC found to anchor the trade terminal on '%s'; ")
+            TEXT("falling back to a spot in front of the player."),
+            *MapString);
+    }
     FActorSpawnParameters SpawnParameters;
     SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     ADwmTradeTerminalActor* Terminal = World->SpawnActor<ADwmTradeTerminalActor>(
@@ -3192,6 +3258,12 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         UE_LOG(LogTemp, Error, TEXT("[DWM Economy] Failed to spawn the Day 18 trade terminal."));
         return;
     }
+
+    // Invisible, like the placed City one on Kai's desk. The cube and its floating
+    // label were a Day 18 debugging aid; standing beside the right person is what
+    // tells the player where to trade now. The interaction sphere is untouched, so
+    // walking up and pressing E works exactly as before.
+    Terminal->SetVisualsHidden(true);
 
     // Terminal's default UPROPERTY values (ToCommunityId="mountain", FromCommunityId="valley",
     // ResourceId="grain", Amount=20, Quantity=20) reproduce the original Day 18 demo trade
