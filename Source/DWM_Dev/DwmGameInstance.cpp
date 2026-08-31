@@ -812,8 +812,57 @@ void UDwmGameInstance::ApplyRouteSpecificTransitionArrival()
     }
 
     const FRotator ArrivalRotation = ArrivalMarker->GetActorRotation();
+
+    // DROP THE ARRIVAL POINT ONTO THE GROUND before teleporting (issue #12).
+    //
+    // The marker's placed Z was used raw, so a marker left even slightly above the
+    // terrain -- easy with packs whose ground sits at different base heights --
+    // teleports the player to that exact height and leaves them hanging until
+    // physics catches up. ADwmNpcActor::ProjectToGround has traced for this all
+    // along; this path simply never did.
+    FVector ArrivalLocation = ArrivalMarker->GetActorLocation();
+    {
+        // Half-height, so the CAPSULE ends up resting on the floor rather than its
+        // centre sitting on it with the legs through the ground.
+        float CapsuleHalfHeight = 0.0f;
+        if (const ACharacter* ArrivingCharacter = Cast<ACharacter>(PlayerPawn))
+        {
+            if (const UCapsuleComponent* Capsule = ArrivingCharacter->GetCapsuleComponent())
+            {
+                CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+            }
+        }
+
+        const FVector TraceStart = ArrivalLocation + FVector(0.0f, 0.0f, 250.0f);
+        const FVector TraceEnd = ArrivalLocation - FVector(0.0f, 0.0f, 2000.0f);
+
+        FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(DwmArrivalGroundTrace),
+            /*bTraceComplex=*/false);
+        TraceParams.AddIgnoredActor(PlayerPawn);
+        TraceParams.AddIgnoredActor(ArrivalMarker);
+
+        FHitResult GroundHit;
+        if (World->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd,
+                ECC_Visibility, TraceParams))
+        {
+            const float DroppedBy = ArrivalLocation.Z - (GroundHit.ImpactPoint.Z + CapsuleHalfHeight);
+            ArrivalLocation.Z = GroundHit.ImpactPoint.Z + CapsuleHalfHeight;
+
+            UE_LOG(LogTemp, Log,
+                TEXT("[DWM Transition] Arrival marker was %.1f cm off the ground; dropped to it."),
+                DroppedBy);
+        }
+        else
+        {
+            // No floor found -- keep the marker's own height rather than dropping the
+            // player through the world, which is worse than arriving high.
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM Transition] No ground under the arrival marker; using its placed height."));
+        }
+    }
+
     PlayerPawn->SetActorLocationAndRotation(
-        ArrivalMarker->GetActorLocation(), ArrivalRotation, false, nullptr, ETeleportType::TeleportPhysics);
+        ArrivalLocation, ArrivalRotation, false, nullptr, ETeleportType::TeleportPhysics);
     PlayerPawn->SetActorHiddenInGame(false);
     PlayerPawn->SetActorEnableCollision(true);
     PlayerController->SetControlRotation(ArrivalRotation);
@@ -822,7 +871,7 @@ void UDwmGameInstance::ApplyRouteSpecificTransitionArrival()
         TEXT("[DWM Transition] Arrived in %s from %s at %s."),
         *GetStableMapName(World).ToString(),
         *PendingArrivalSourceMapName.ToString(),
-        *ArrivalMarker->GetActorLocation().ToCompactString());
+        *ArrivalLocation.ToCompactString());
 
     PendingArrivalSourceMapName = NAME_None;
     TransitionArrivalAttempts = 0;
@@ -2140,13 +2189,25 @@ void UDwmGameInstance::SetupTransitionCharacterDisplay()
         return;
     }
 
-    // ACharacter's origin is the middle of its capsule, while the transition actor's
-    // authored origin sits on its display floor. Raise the actor so its feet rest on
-    // that floor instead of placing half of the customized body below it.
+    // NO capsule-half-height raise. It looked principled and it was wrong.
+    //
+    // The old comment claimed the transition actor's origin "sits on its display
+    // floor", so the raise was meant to stand the character on it. The measurement
+    // says otherwise: anchor Z=1.0 with an 88.0 half-height put him at Z=89.0, and he
+    // is visibly suspended on screen. There is no floor in these containers -- the
+    // anchor is simply where the pack composes its OWN display mesh, whose origin is
+    // its centre. Matching that transform puts our character exactly where the pack's
+    // figure would have stood; raising him half a body above it is what "floating in
+    // the cut scenes" was.
     if (const UCapsuleComponent* Capsule = DisplayCharacter->GetCapsuleComponent())
     {
-        DisplayCharacter->AddActorWorldOffset(
-            FVector::UpVector * Capsule->GetScaledCapsuleHalfHeight(), false);
+        UE_LOG(LogTemp, Log,
+            TEXT("[DWM Transition] Display anchor %s (from %s), capsule half-height %.1f, ")
+            TEXT("character at %s (no raise applied)."),
+            *DisplayTransform.GetLocation().ToCompactString(),
+            RotatingMesh ? TEXT("mesh component") : TEXT("actor root"),
+            Capsule->GetScaledCapsuleHalfHeight(),
+            *DisplayCharacter->GetActorLocation().ToCompactString());
     }
 
     DisplayCharacter->SetActorEnableCollision(false);
@@ -3156,7 +3217,9 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         if (PlacedTerminal)
         {
             bDemoTradeTerminalSpawned = true;
-            SetEconomyStatus(TEXT("Trade terminal ready: walk up to it and press E."), FColor::Cyan);
+            // T, not E: terminals have used their own key since #20, so that a terminal
+            // beside an NPC stays reachable without competing with dialogue.
+            SetEconomyStatus(TEXT("Trade terminal ready: walk up to it and press T."), FColor::Cyan);
             return;
         }
     }
@@ -3357,5 +3420,9 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
     // additional storyline terminals (Hillside/Suburb/City) are level-placed instances with
     // their own configured trades instead -- see AGENT_LOG.md for placement instructions.
     bDemoTradeTerminalSpawned = true;
-    SetEconomyStatus(TEXT("Day 18 ready: walk to the gold trade terminal and press E to buy Grain from Valley."), FColor::Cyan);
+    // Was "walk to the gold trade terminal and press E". Both halves went stale: the
+    // terminal is no longer a gold cube (#6 hid the debug visuals and stood it beside
+    // the trader), and the key has been T since #20.
+    SetEconomyStatus(TEXT("Trade ready: find the trader and press T to buy Grain from Valley."),
+        FColor::Cyan);
 }
