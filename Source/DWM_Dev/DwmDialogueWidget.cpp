@@ -6,6 +6,7 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/TextBlock.h"
+#include "Components/SizeBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "DwmNpcActor.h"
@@ -46,15 +47,36 @@ void UDwmDialogueWidget::BuildFallbackLayout()
         PanelSlot->SetAnchors(FAnchors(0.5f, 1.0f));
         PanelSlot->SetAlignment(FVector2D(0.5f, 1.0f));
         PanelSlot->SetPosition(FVector2D(0.0f, -42.0f));
-        PanelSlot->SetSize(FVector2D(900.0f, 250.0f));
+
+        // GROW TO FIT THE TEXT rather than a fixed 900x250 (issue #42).
+        //
+        // The height was the problem: the body wraps, so a long line ran past the
+        // bottom of the background and sat on the scene. A fixed box can only ever be
+        // right for one length of dialogue, and these lines run from one sentence to
+        // four. Auto-size makes the panel follow its content, so the background covers
+        // the text by construction rather than by a number that is usually big enough.
+        //
+        // The issue wondered about splitting the text into separate instances; that is
+        // not needed -- the layout can simply stop being fixed.
+        PanelSlot->SetAutoSize(true);
     }
 
+    // The panel auto-sizes, so WIDTH has to be constrained or a long line would stretch
+    // the background across the screen instead of wrapping. UTextBlock has no
+    // SetWrapTextAt in 5.3 -- only SetAutoWrapText -- so the limit comes from a SizeBox
+    // around the column. 844 is the old fixed 900 minus the panel's 28-a-side padding,
+    // so the dialogue keeps exactly the width it always had.
+    USizeBox* WidthLimit = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("DialogueWidth"));
+    WidthLimit->SetWidthOverride(844.0f);
+    Panel->SetContent(WidthLimit);
+
     UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("DialogueColumn"));
-    Panel->SetContent(Column);
+    WidthLimit->SetContent(Column);
 
     SpeakerText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("SpeakerText"));
     SpeakerText->SetColorAndOpacity(FSlateColor(FLinearColor(0.95f, 0.72f, 0.20f, 1.0f)));
     SpeakerText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFont(), 28));
+    SpeakerText->SetAutoWrapText(true);
     Column->AddChildToVerticalBox(SpeakerText);
 
     BodyText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BodyText"));
