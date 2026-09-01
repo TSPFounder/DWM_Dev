@@ -1,0 +1,63 @@
+; Inno Setup script for a DWM_Dev Windows installer.
+;
+; Requires Inno Setup 6 (free): https://jrsoftware.org/isdl.php
+; Build with:
+;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" Packaging\DWM_Dev.iss
+;
+; SOURCE is the ARCHIVED build, not Saved/StagedBuilds -- the archive is what
+; BuildCookRun finished with and is the thing that has actually been run.
+;
+; A note on size: the installer will be roughly as large as the build. The cook
+; already compresses its .ucas/.pak containers, so LZMA has little left to take.
+; An installer makes distribution tidy; it is not a way to get under a hosting
+; limit.
+
+#define AppName        "Dream World Maker"
+#define AppVersion     "0.1"
+#define AppPublisher   "TSP"
+#define AppExeName     "DWM_Dev.exe"
+#define BuildDir       "C:\DreamWorldMaker\Builds_Capped\Windows"
+
+[Setup]
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppPublisher={#AppPublisher}
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
+OutputDir=C:\DreamWorldMaker\Installers
+OutputBaseFilename=DWM_Setup_{#AppVersion}
+Compression=lzma2/max
+SolidCompression=yes
+; DISK SPANNING IS REQUIRED, not optional: Inno refuses to build a single
+; Setup.exe over ~4.2 GB, and this payload is ~12.4 GB. Output becomes
+; DWM_Setup_x.exe plus numbered .bin volumes, which the installer reassembles.
+;
+; SLICE SIZE IS DELIBERATELY UNDER 2 GB. GitHub caps a release asset at 2 GB, so
+; 1.9 GB slices mean every file can be uploaded to a Release -- roughly seven of
+; them for this build. That is the only route found so far that puts a build this
+; size on GitHub at all.
+DiskSpanning=yes
+DiskSliceSize=1900000000
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
+WizardStyle=modern
+; Refuses to start rather than half-installing on a full disk.
+ExtraDiskSpaceRequired=0
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
+
+[Files]
+; Everything the archive step produced, recursively.
+Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
