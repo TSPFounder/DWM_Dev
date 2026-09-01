@@ -43,7 +43,7 @@ ADwmTradeTerminalActor::ADwmTradeTerminalActor()
 
     TerminalLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("TerminalLabel"));
     TerminalLabel->SetupAttachment(InteractionSphere);
-    TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 145.0f));
+    TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, LabelHeight));
     TerminalLabel->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
     TerminalLabel->SetHorizontalAlignment(EHTA_Center);
     TerminalLabel->SetWorldSize(LabelWorldSize);
@@ -67,6 +67,13 @@ void ADwmTradeTerminalActor::BeginPlay()
     // Re-applied here as well as in the constructor: a placed instance carries its own
     // LabelWorldSize, and that value only exists once the instance has been loaded.
     TerminalLabel->SetWorldSize(LabelWorldSize);
+    TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, LabelHeight));
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DWM Terminal] '%s' label at %s, size %.1f, hidden=%s, text='%s'."),
+        *GetNameSafe(this), *TerminalLabel->GetComponentLocation().ToCompactString(),
+        LabelWorldSize, TerminalLabel->bHiddenInGame ? TEXT("yes") : TEXT("no"),
+        *TerminalLabel->Text.ToString());
 }
 
 FString ADwmTradeTerminalActor::BuildTradeDescription() const
@@ -114,16 +121,25 @@ void ADwmTradeTerminalActor::Tick(float DeltaSeconds)
     TerminalLabel->SetWorldRotation(FRotator(0.0f, Facing.Yaw, 0.0f));
 }
 
-void ADwmTradeTerminalActor::SetVisualsHidden(bool bInHidden)
+void ADwmTradeTerminalActor::SetLabelHeight(float InHeight)
+{
+    LabelHeight = InHeight;
+    if (TerminalLabel)
+    {
+        TerminalLabel->SetRelativeLocation(FVector(0.0f, 0.0f, LabelHeight));
+    }
+}
+
+void ADwmTradeTerminalActor::SetDebugCubeHidden(bool bInHidden)
 {
     if (TerminalMesh)
     {
         TerminalMesh->SetHiddenInGame(bInHidden);
     }
-    if (TerminalLabel)
-    {
-        TerminalLabel->SetHiddenInGame(bInHidden);
-    }
+
+    // The LABEL stays. It is the only thing telling the player a trade is here and
+    // what it costs, and Kai's placed terminal has always shown one -- hiding it on
+    // the spawned terminals is what made the other communities look different.
 }
 
 void ADwmTradeTerminalActor::OnInteractionSphereBeginOverlap(UPrimitiveComponent* OverlappedComponent,
