@@ -3504,11 +3504,24 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         return;
     }
 
-    // Invisible, like the placed City one on Kai's desk. The cube and its floating
-    // label were a Day 18 debugging aid; standing beside the right person is what
-    // tells the player where to trade now. The interaction sphere is untouched, so
-    // walking up and pressing E works exactly as before.
-    Terminal->SetVisualsHidden(true);
+    // Cube hidden, LABEL KEPT -- the same look as Kai's placed terminal, which shows
+    // its small billboarded trade text and no grey box. #6 hid both here, which
+    // left every other community with an invisible terminal and no way to know a
+    // trade was there. The interaction sphere is untouched either way.
+    Terminal->SetDebugCubeHidden(true);
+
+    // Per level, because the label hangs off the terminal and the terminals stand
+    // beside very different things. 145 reads well just above Kai's monitors; next
+    // to Owen upstairs it reaches the ceiling, and above Maria's rocker it clears
+    // the porch roof.
+    if (MapString.Contains(TEXT("Hillside"), ESearchCase::IgnoreCase))
+    {
+        Terminal->SetLabelHeight(45.0f);
+    }
+    else if (MapString.Contains(TEXT("Valley"), ESearchCase::IgnoreCase))
+    {
+        Terminal->SetLabelHeight(95.0f);
+    }
 
     // Terminal's default UPROPERTY values (ToCommunityId="mountain", FromCommunityId="valley",
     // ResourceId="grain", Amount=20, Quantity=20) reproduce the original Day 18 demo trade

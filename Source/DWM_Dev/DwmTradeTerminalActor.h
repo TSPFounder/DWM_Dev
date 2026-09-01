@@ -105,6 +105,14 @@ private:
     UPROPERTY(EditAnywhere, Category = "DWM|Economy")
     float LabelWorldSize = 5.6f;
 
+    /** Height of the label above the terminal.
+
+        145 suited Kai's desk, where the terminal sits low and the text reads just
+        above the monitors. Beside a seated character on a different floor it lands
+        near the ceiling, so this is per-instance rather than one constant. */
+    UPROPERTY(EditAnywhere, Category = "DWM|Economy")
+    float LabelHeight = 145.0f;
+
     /** Turn the label to face the player each frame.
 
         It was fixed at 180 degrees of yaw, which only reads from one side; walk
@@ -115,13 +123,18 @@ private:
 public:
     virtual void Tick(float DeltaSeconds) override;
 
-    /** Hide the cube and its floating label while leaving the terminal usable.
+    /** Hide the grey debug CUBE, keeping the floating trade label.
 
-        The visuals are a Day 18 debugging aid -- a grey box with text floating over
-        it. A terminal standing where the trade actually happens does not need them,
-        and the placed City instance on Kai's desk already reads correctly without one.
+        The cube is a Day 18 debugging aid; the label is how a player knows a trade is
+        available and what it costs. #6 hid both, which left the runtime-spawned
+        terminals with no affordance at all while Kai's placed one -- which nothing
+        hides -- kept its label. That difference was the inconsistency, not the cube.
 
-        Deliberately does NOT touch the interaction sphere: this changes what is drawn,
-        not what can be walked up to and pressed E on. */
-    void SetVisualsHidden(bool bInHidden);
+        Deliberately does NOT touch the interaction sphere: this changes what is
+        drawn, not what can be walked up to and used. */
+    void SetDebugCubeHidden(bool bInHidden);
+
+    /** Move the label up or down. Applies immediately, because the terminal is
+        configured after SpawnActor has already run BeginPlay. */
+    void SetLabelHeight(float InHeight);
 };
