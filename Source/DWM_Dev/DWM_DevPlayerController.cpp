@@ -4,6 +4,9 @@
 #include "DWM_DevPlayerController.h"
 #include "DWM_DevCharacter.h"
 #include "DwmInteractiveDoor.h"
+#include "EngineUtils.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/InputKeyDelegateBinding.h"
 #include "DwmNpcActor.h"
 #include "DwmTradeTerminalActor.h"
 #include "Components/InputComponent.h"
@@ -28,7 +31,11 @@ void ADWM_DevPlayerController::SetupInputComponent()
 		// These controller-level bindings let an alternate player pawn (such as the
 		// CharacterCustomizer pawn) retain DWM's terminal and door interactions.
 		InputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevPlayerController::InteractWithTradeTerminal);
-		InputComponent->BindKey(EKeys::F, IE_Pressed, this, &ADWM_DevPlayerController::InteractWithDoor);
+		// Non-consuming, for the same reason as the character's binding: this fires on
+		// every F press whether or not a DWM door is in range, so consuming it would
+		// block any world actor that listens for F.
+		InputComponent->BindKey(EKeys::F, IE_Pressed, this,
+			&ADWM_DevPlayerController::InteractWithDoor).bConsumeInput = false;
 		InputComponent->BindKey(EKeys::T, IE_Pressed, this, &ADWM_DevPlayerController::InteractWithTerminalKey);
 	}
 }
@@ -36,6 +43,14 @@ void ADWM_DevPlayerController::SetupInputComponent()
 void ADWM_DevPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// One shot, one second in: late enough that every placed door has run BeginPlay,
+	// early enough that the player cannot have reached one yet.
+	{
+		FTimerHandle DoorInputHandle;
+		GetWorldTimerManager().SetTimer(DoorInputHandle, this,
+			&ADWM_DevPlayerController::EnableInputOnPackDoors, 1.0f, false);
+	}
 
 	// get the enhanced input subsystem
 	if (InputMappingContext)
@@ -150,8 +165,134 @@ void ADWM_DevPlayerController::InteractWithTradeTerminal()
 	}
 }
 
+void ADWM_DevPlayerController::EnableInputOnPackDoors()
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	int32 Repaired = 0;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		AActor* Candidate = *It;
+		if (!Candidate || Candidate->IsA(ADwmInteractiveDoor::StaticClass()))
+		{
+			// Our own doors are driven by their overlap sphere, not by actor input.
+			continue;
+		}
+
+		// Doors only. Repairing every input-binding Blueprint would also force input on
+		// actors that deliberately enable it just while the player is in range, making
+		// them respond to keys from across the level.
+		if (!Candidate->GetClass()->GetName().Contains(TEXT("Door"))
+			&& !Candidate->GetName().Contains(TEXT("Door")))
+		{
+			continue;
+		}
+
+		// AND ONLY BLUEPRINTS THAT ACTUALLY BIND INPUT.
+		//
+		// Matching "Door" by name swept up 903 actors in the City, nearly all of them
+		// static ..._door_piece meshes that are part of a building facade and listen for
+		// nothing. Pushing those onto the input stack is pure overhead. A door that wants
+		// a key has an InputKey event, which UBlueprintGeneratedClass records as an
+		// input delegate binding -- so ask the class whether it binds input at all.
+		UBlueprintGeneratedClass* BlueprintClass = Cast<UBlueprintGeneratedClass>(Candidate->GetClass());
+		if (!BlueprintClass)
+		{
+			continue;
+		}
+
+		bool bBindsInput = false;
+		for (const UDynamicBlueprintBinding* Binding : BlueprintClass->DynamicBindingObjects)
+		{
+			if (Cast<UInputKeyDelegateBinding>(Binding))
+			{
+				bBindsInput = true;
+				break;
+			}
+		}
+
+		if (!bBindsInput)
+		{
+			continue;
+		}
+
+		// An InputComponent already present means the door claimed input itself and
+		// there is nothing to repair -- which is what happens in the editor.
+		if (Candidate->InputComponent)
+		{
+			continue;
+		}
+
+		Candidate->EnableInput(this);
+		++Repaired;
+	}
+
+	if (Repaired > 0)
+	{
+		UE_LOG(LogTemp, Log,
+			TEXT("[DWM DOOR] Enabled input on %d door(s) that did not claim it themselves."),
+			Repaired);
+	}
+}
+
 void ADWM_DevPlayerController::InteractWithDoor()
 {
+	// TEMPORARY DIAGNOSTIC for the City door, which works in PIE by every route and
+	// fails in the packaged build. Reasoning from the outside has produced three wrong
+	// theories (pawn class, key consumption, cooking), so this reports what is actually
+	// true at the moment F is pressed.
+	//
+	// The decisive fact is whether the pack's B_Door ever had EnableInput called on it:
+	// EnableInput is what creates an actor's InputComponent and puts it on the
+	// controller's input stack, so a null InputComponent means the door is not
+	// listening and F could never have reached it.
+	{
+		const FVector From = GetPawn() ? GetPawn()->GetActorLocation() : FVector::ZeroVector;
+		UE_LOG(LogTemp, Warning, TEXT("[DWM DOOR] F pressed. Pawn '%s' (class '%s') at %s."),
+			*GetNameSafe(GetPawn()), *GetNameSafe(GetPawn() ? GetPawn()->GetClass() : nullptr),
+			*From.ToCompactString());
+
+		int32 Reported = 0;
+		for (TActorIterator<AActor> It(GetWorld()); It && Reported < 5; ++It)
+		{
+			AActor* Candidate = *It;
+			// Match the ACTOR name as well as the class. The City door is named
+			// Building33_GF3C10_B_Door0 with class B_Door_C -- either could be the one
+			// carrying "Door", and missing the door entirely would waste the whole run.
+			if (!Candidate
+				|| (!Candidate->GetClass()->GetName().Contains(TEXT("Door"))
+					&& !Candidate->GetName().Contains(TEXT("Door"))))
+			{
+				continue;
+			}
+
+			const float Distance = FVector::Dist(From, Candidate->GetActorLocation());
+			if (Distance > 1000.0f)
+			{
+				continue;
+			}
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DWM DOOR]   '%s' (class '%s') at %.0f cm: InputComponent=%s, ")
+				TEXT("input stack=%s, tick=%s."),
+				*Candidate->GetName(), *GetNameSafe(Candidate->GetClass()), Distance,
+				Candidate->InputComponent ? TEXT("YES") : TEXT("NO (EnableInput never ran)"),
+				(Candidate->InputComponent && CurrentInputStack.Contains(Candidate->InputComponent))
+					? TEXT("yes") : TEXT("no"),
+				Candidate->IsActorTickEnabled() ? TEXT("on") : TEXT("off"));
+			++Reported;
+		}
+
+		if (Reported == 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DWM DOOR]   No actor with 'Door' in its class name within 10 m."));
+		}
+	}
+
 	if (ADwmInteractiveDoor* Door = ActiveDoor.Get())
 	{
 		Door->ToggleDoor(GetPawn());

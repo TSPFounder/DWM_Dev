@@ -71,7 +71,12 @@ void ADWM_DevCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	// the base input component keeps this temporary Day 18 interaction independent of a new
 	// Input Action asset, while the existing movement actions stay on Enhanced Input below.
 	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &ADWM_DevCharacter::HandlePrimaryInteraction);
-	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &ADWM_DevCharacter::InteractWithDoor);
+	// DO NOT CONSUME F. BindKey consumes by default, which starves every other actor
+	// listening for the same key -- including the city pack's B_Door, whose BoxEvent
+	// enables actor input and then waits for F. Our handler is a no-op unless an
+	// ADwmInteractiveDoor is in range, so there is nothing to protect by swallowing it.
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this,
+		&ADWM_DevCharacter::InteractWithDoor).bConsumeInput = false;
 	// T for Trade. See InteractWithTerminal's declaration for why terminals no longer
 	// share E with dialogue (issue #20).
 	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &ADWM_DevCharacter::InteractWithTerminal);
