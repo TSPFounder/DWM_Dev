@@ -13,10 +13,14 @@
 ; limit.
 
 #define AppName        "Dream World Maker"
-#define AppVersion     "0.1"
+#define AppVersion     "0.2"
 #define AppPublisher   "TSP"
 #define AppExeName     "DWM_Dev.exe"
-#define BuildDir       "C:\DreamWorldMaker\Builds_Capped\Windows"
+; The archive BuildCookRun writes to. Builds_Capped was a one-off directory from
+; when the texture cap was applied by hand; the cap now lives in
+; DefaultDeviceProfiles.ini and applies to every cook, so the normal output is
+; already capped. Pointing here at a stale directory silently ships an old build.
+#define BuildDir       "C:\DreamWorldMaker\Builds\Windows"
 
 [Setup]
 AppName={#AppName}
