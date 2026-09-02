@@ -35,6 +35,13 @@ struct FDwmDialogueProxySource
 	AActor* SourceActor = nullptr;
 	ADwmNpcActor* ExistingNpc = nullptr;
 
+	/** Set once a TAGGED actor has claimed this source. Nothing outranks a tag: it is
+	    the only identifier here that survives cooking intact. Labels are editor-only
+	    and object names keep whatever the actor was created as, which is why DeShawn
+	    -- labelled 'DeShawn' but named something else entirely -- was found in PIE and
+	    not in the packaged build. */
+	bool bTagMatch = false;
+
 	/** Set once an actor labelled EXACTLY with ActorToken has claimed this source, so
 	    a later loose name match cannot displace it. */
 	bool bExactLabelMatch = false;
@@ -192,10 +199,51 @@ void BootstrapDialogueProxyNpcs(
 			continue;
 		}
 
+		// A TAG WINS BEFORE ANY OTHER TEST, including the skeletal-mesh gate below.
+		// Tagging an actor says "this is the one"; the component check only guesses at
+		// what such an actor looks like, and it is the guess that rejected DeShawn.
+		{
+			bool bClaimed = false;
+			for (FDwmDialogueProxySource& Source : Sources)
+			{
+				if (Actor->ActorHasTag(FName(Source.ActorLabel)))
+				{
+					Source.SourceActor = Actor;
+					Source.bTagMatch = true;
+					bClaimed = true;
+					UE_LOG(LogTemp, Log, TEXT("[%s] '%s' is tagged '%s'; using it."),
+						LogPrefix, *GetNameSafe(Actor), Source.ActorLabel);
+					break;
+				}
+			}
+			if (bClaimed)
+			{
+				continue;
+			}
+		}
+
+		// EVERY actor this loop rejects, and why. The Suburbs bootstrap failed to find
+		// BP_DeShawn in a cooked build even though that name is in the level, so the
+		// reason it was skipped is not something to guess at a second time.
 		if (!Actor->FindComponentByClass<USkeletalMeshComponent>())
 		{
+			const FString RejectName = Actor->GetName();
+			for (const FDwmDialogueProxySource& Source : Sources)
+			{
+				if (RejectName.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[%s]   SKIPPED '%s' (class '%s'): it matches '%s' but has no ")
+						TEXT("SkeletalMeshComponent."),
+						LogPrefix, *RejectName, *GetNameSafe(Actor->GetClass()),
+						Source.ActorToken);
+				}
+			}
 			continue;
 		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[%s]   candidate '%s' (class '%s')."),
+			LogPrefix, *Actor->GetName(), *GetNameSafe(Actor->GetClass()));
 
 		const FString Identity = GetDwmBootstrapIdentity(Actor);
 
@@ -215,6 +263,11 @@ void BootstrapDialogueProxyNpcs(
 
 		for (FDwmDialogueProxySource& Source : Sources)
 		{
+			if (Source.bTagMatch)
+			{
+				continue;
+			}
+
 			if (Label.Equals(Source.ActorToken, ESearchCase::IgnoreCase))
 			{
 				if (Source.SourceActor && Source.SourceActor != Actor)
@@ -229,7 +282,7 @@ void BootstrapDialogueProxyNpcs(
 				break;
 			}
 
-			if (!Source.SourceActor && !Source.bExactLabelMatch
+			if (!Source.SourceActor && !Source.bExactLabelMatch && !Source.bTagMatch
 				&& Identity.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
 			{
 				Source.SourceActor = Actor;
@@ -290,9 +343,12 @@ void BootstrapDialogueProxyNpcs(
 		if (!Source.SourceActor)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[%s] Could not find a placed visual actor containing '%s' for %s."),
+				TEXT("[%s] Could not find a placed visual actor containing '%s' for %s. ")
+				TEXT("Tag the placed actor '%s' in the editor (Actor -> Tags); its label ")
+				TEXT("is not visible in a cooked build."),
 				LogPrefix,
 				Source.ActorToken,
+				Source.ActorLabel,
 				Source.ActorLabel);
 		}
 	}

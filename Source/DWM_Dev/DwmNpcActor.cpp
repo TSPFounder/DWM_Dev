@@ -314,6 +314,10 @@ void ADwmNpcActor::PopulateHillsideDialogue()
         // Issue #38: found on the couch when the player walks in, and she gets up.
         // The offsets are how an office-chair clip is made to land on a couch cushion;
         // they are EditAnywhere so this is a level tweak, not a recompile.
+        // The specific couch, not "nearest sofa": the cooked build proved names are
+        // not stable, and StaticMeshActor_191 was a different sofa there than in PIE.
+        SeatActorTag = TEXT("DWM_HillsideCouch");
+
         // Two of them on one couch: pick at random so they are not doing the same
         // thing side by side.
         bRandomiseSeatedIdle = true;
@@ -377,6 +381,10 @@ void ADwmNpcActor::PopulateHillsideDialogue()
 
         // The specific chair at the computer. Named outright because the room holds
         // several chairs and the nearest one was not his.
+        // TAG, not the label. "SM_Chair2" is an editor label; GetActorLabel() is
+        // compiled out when cooked, so in the packaged build he matched nothing and
+        // fell back to the nearest chair -- which was downstairs.
+        SeatActorTag = TEXT("DWM_OwenSeat");
         SeatActorName = TEXT("SM_Chair2");
 
         // Restores the height Owen had BEFORE the City work, exactly rather than by eye.
@@ -418,6 +426,8 @@ void ADwmNpcActor::PopulateHillsideDialogue()
     {
         DisplayName = LOCTEXT("NathanName", "Nathan");
         const FText Speaker = DisplayName;
+
+        SeatActorTag = TEXT("DWM_HillsideCouch");
 
         // Issue #38: on the couch beside Sophia, and gets up just after her -- the
         // pause reads as following her lead rather than the two rising on a cue.
@@ -592,6 +602,7 @@ void ADwmNpcActor::PopulateHillsideDialogue()
         // The desk chair: the chair nearest BP_Desk. Named by anchor because the City
         // holds fourteen SM_Chair actors and "nearest to Kai" is meaningless while Kai
         // himself is in the wrong place.
+        SeatAnchorTag = TEXT("DWM_KaiDesk");
         SeatAnchorActorName = TEXT("BP_Desk");
         SeatMeshNameFilters = { TEXT("SM_Chair") };
         SeatLateralOffset = 0.0f;
@@ -683,6 +694,11 @@ void ADwmNpcActor::BeginPlay()
             bFarewellUnlocked = GameInstance->IsHankFarewellUnlocked();
             ReturnVisitCount = GameInstance->GetHankReturnVisitCount();
             AmbientCursor = GameInstance->GetHankAmbientCursor();
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM HANK] Restored from GameInstance: openingDelivered=%s, ")
+                TEXT("farewellUnlocked=%s, returnVisits=%d."),
+                bHasDeliveredOpening ? TEXT("yes") : TEXT("NO"),
+                bFarewellUnlocked ? TEXT("yes") : TEXT("no"), ReturnVisitCount);
         }
     }
 
@@ -1005,8 +1021,31 @@ AActor* ADwmNpcActor::FindSeatActor(UStaticMeshComponent*& OutSeatComponent) con
         return nullptr;
     }
 
+    // A TAGGED seat wins outright: no filters, no distance, and unlike a label or a
+    // name it still matches once the project is cooked.
+    if (!SeatActorTag.IsNone())
+    {
+        for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+        {
+            if (*It && It->ActorHasTag(SeatActorTag))
+            {
+                UE_LOG(LogTemp, Log, TEXT("[DWM NPC] '%s' seat found by tag '%s': '%s'."),
+                    *GetNameSafe(this), *SeatActorTag.ToString(), *GetNameSafe(*It));
+                return *It;
+            }
+        }
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DWM NPC] '%s' found no actor tagged '%s'; falling back. ")
+            TEXT("Add the tag in the editor (Actor -> Tags)."),
+            *GetNameSafe(this), *SeatActorTag.ToString());
+    }
+
     // A named seat wins outright: no filters, no distance. Nearest-match is a decent
     // guess for one sofa in a room and a bad one where several chairs are in reach.
+    //
+    // KEPT ONLY AS A FALLBACK. The label half is editor-only and the name half is
+    // unreliable once cooked; prefer SeatActorTag.
     if (!SeatActorName.IsEmpty())
     {
         for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -1050,7 +1089,32 @@ AActor* ADwmNpcActor::FindSeatActor(UStaticMeshComponent*& OutSeatComponent) con
     // auto-generated names while the asset they reference does not.
     // Measure from the anchor when one is named -- see SeatAnchorActorName.
     FVector SearchOrigin = GetActorLocation();
-    if (!SeatAnchorActorName.IsEmpty())
+
+    // A TAG WINS, BUT A MISSING TAG MUST FALL THROUGH TO THE NAME LOOKUP.
+    //
+    // Writing this as tag / else-if-name silently disabled the name lookup the moment a
+    // tag was configured: Kai has SeatAnchorTag set but no actor carries it yet, so the
+    // BP_Desk search never ran, the origin stayed at his spawn point, every chair was
+    // 30m away, and he was moved to nowhere near his office.
+    bool bAnchorResolved = false;
+
+    if (!SeatAnchorTag.IsNone())
+    {
+        for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+        {
+            if (*It && It->ActorHasTag(SeatAnchorTag))
+            {
+                bAnchorResolved = true;
+                SearchOrigin = It->GetActorLocation();
+                UE_LOG(LogTemp, Log,
+                    TEXT("[DWM NPC] '%s' measuring seats from tagged anchor '%s' at %s."),
+                    *GetNameSafe(this), *SeatAnchorTag.ToString(),
+                    *SearchOrigin.ToCompactString());
+                break;
+            }
+        }
+    }
+    if (!bAnchorResolved && !SeatAnchorActorName.IsEmpty())
     {
         bool bFoundAnchor = false;
         for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -2410,6 +2474,17 @@ EDwmDialogueState ADwmNpcActor::SelectStateForThisInteraction() const
             : EDwmDialogueState::Approach;
     }
 
+    // Why Hank picked the line he did. The opening replaying on a return visit has
+    // several distinct causes -- the QuestDetails stage never completed on the first
+    // visit so the flag was never set, the GameInstance restore did not run, or the
+    // trade partners did not resolve -- and they are indistinguishable from the outside.
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DWM HANK] Selecting state: openingDelivered=%s, farewellUnlocked=%s, ")
+        TEXT("returnVisits=%d, buyer='%s'."),
+        bHasDeliveredOpening ? TEXT("yes") : TEXT("NO"),
+        bFarewellUnlocked ? TEXT("yes") : TEXT("no"),
+        ReturnVisitCount, *BuyerCommunityId);
+
     // Act 3 payoff wins outright once the turbine beat has fired.
     if (bFarewellUnlocked)
     {
@@ -2572,6 +2647,8 @@ void ADwmNpcActor::AdvanceDialogue()
             if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
             {
                 GameInstance->MarkHankOpeningDelivered();
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DWM HANK] QuestDetails completed; opening marked delivered."));
             }
         }
     }
