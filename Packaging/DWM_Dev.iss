@@ -56,7 +56,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 ; Everything the archive step produced, recursively.
-Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; EXCLUDE Saved. It holds crash dumps, minidumps and every debug log the build has
+; written -- none of which belongs in someone else's install, and all of which the
+; game rewrites while the installer is reading it. A log rotating mid-compile is
+; what aborted the 0.2 build with "the system cannot find the file specified".
+Source: "{#BuildDir}\*"; DestDir: "{app}"; Excludes: "*\Saved\*,*\Saved"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
