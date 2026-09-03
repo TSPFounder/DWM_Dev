@@ -269,6 +269,21 @@ void ADwmValleyLifeDirector::DiscoverValleyActors()
             continue;
         }
 
+        // TAG FIRST. Matching the mesh path works, but only while exactly one
+        // SM_RockingChair exists; a tag names THE chair Maria uses and survives
+        // cooking, which actor names do not.
+        if (Actor->ActorHasTag(TEXT("DWM_MariaSeat")))
+        {
+            RockingChairActor = Actor;
+            ClosestChairDistanceSquared = -1.0f;
+            continue;
+        }
+        if (ClosestChairDistanceSquared < 0.0f)
+        {
+            // Already settled by tag; nothing else can win.
+            continue;
+        }
+
         UStaticMeshComponent* StaticMesh = Actor->FindComponentByClass<UStaticMeshComponent>();
         const UStaticMesh* StaticMeshAsset = StaticMesh ? StaticMesh->GetStaticMesh() : nullptr;
         if (!StaticMeshAsset

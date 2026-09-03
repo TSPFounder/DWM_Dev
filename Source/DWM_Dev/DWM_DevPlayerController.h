@@ -49,6 +49,27 @@ private:
 	void InteractWithTerminalKey();
 	void InteractWithDoor();
 
+	/** Escape opens a confirmation panel with Keep Playing / Quit to Desktop.
+	    A packaged build otherwise has no way out but Alt+F4, and Escape does nothing
+	    by default in a shipping game. Confirmed rather than immediate, because the
+	    key is easy to hit by accident and Hank's errand progress does not survive
+	    the process. */
+	void ToggleQuitMenu();
+
+	UPROPERTY(Transient)
+	class UDwmQuitMenuWidget* QuitMenu = nullptr;
+
+	/** Give asset-pack doors the input they failed to claim for themselves.
+
+	    Doors like AmericanCityPacks B_Door call Enable Input (Get Player Controller 0)
+	    on BeginPlay. In a packaged build that controller can still be null at that
+	    moment, so EnableInput quietly does nothing and the door never listens for its
+	    key. PIE hides this because the world is already running when BeginPlay fires.
+	    Measured: identical door and pawn reported InputComponent=YES in PIE and NO
+	    packaged. Running once after BeginPlay, when this controller definitely
+	    exists, repairs it without touching the vendor Blueprint. */
+	void EnableInputOnPackDoors();
+
 	TWeakObjectPtr<ADwmTradeTerminalActor> ActiveTradeTerminal;
 	TWeakObjectPtr<ADwmInteractiveDoor> ActiveDoor;
 	TWeakObjectPtr<ADwmNpcActor> ActiveNpc;

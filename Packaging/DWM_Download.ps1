@@ -19,7 +19,7 @@
 
 param(
     [string]$Repo    = "TSPFounder/DWM_Dev",
-    [string]$Tag     = "v0.1",
+    [string]$Tag     = "v0.2",
     [string]$DestDir = (Join-Path $PSScriptRoot "DWM_Install")
 )
 

@@ -36,12 +36,12 @@ through.
 2. Click the **latest release** at the top.
 3. Scroll to **Assets** and expand it if collapsed.
 4. Download **every** file in the list:
-   - `DWM_Setup_0.1.exe`
-   - `DWM_Setup_0.1-1.bin`
-   - `DWM_Setup_0.1-2.bin`
+   - `DWM_Setup_0.2.exe`
+   - `DWM_Setup_0.2-1.bin`
+   - `DWM_Setup_0.2-2.bin`
    - …and so on through the last `.bin`
 5. Move all of them into **one folder** — for example `Downloads\DWM`.
-6. Double-click **`DWM_Setup_0.1.exe`** and follow the installer.
+6. Double-click **`DWM_Setup_0.2.exe`** and follow the installer.
 
 Windows may warn that the publisher is unrecognised, because the installer isn't
 code-signed. Choose **More info → Run anyway** if you trust the source.

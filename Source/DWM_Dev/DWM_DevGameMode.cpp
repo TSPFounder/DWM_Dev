@@ -14,6 +14,91 @@
 
 namespace
 {
+/** Put every sheep in the level on the grazing loop.
+
+    Staggered, because six sheep chewing in lockstep looks worse than six sheep doing
+    nothing -- the same reason the Valley director staggers its chickens. The offset is
+    derived from the actor's own position so it is stable across runs rather than
+    re-randomised on every load. */
+void SetMountainSheepGrazing(UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	UAnimSequence* Graze = LoadObject<UAnimSequence>(nullptr,
+		TEXT("/Game/FarmAnimalsPack/Sheep/Animations/ANIM_Sheep_IdleGraze.ANIM_Sheep_IdleGraze"));
+	if (!Graze)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DWM Sheep] ANIM_Sheep_IdleGraze failed to load; the flock will stay in ")
+			TEXT("its reference pose. Is /Game/FarmAnimalsPack/Sheep cooked?"));
+		return;
+	}
+
+	int32 Grazing = 0;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor)
+		{
+			continue;
+		}
+
+		USkeletalMeshComponent* Mesh = Actor->FindComponentByClass<USkeletalMeshComponent>();
+		const USkeletalMesh* Asset = Mesh ? Mesh->GetSkeletalMeshAsset() : nullptr;
+		if (!Asset)
+		{
+			continue;
+		}
+
+		if (!Asset->GetPathName().Contains(TEXT("SK_Sheep"), ESearchCase::IgnoreCase))
+		{
+			// Every other skeletal actor in the Mountain, so a sheep wearing a mesh this
+			// filter does not recognise still shows up in the log.
+			UE_LOG(LogTemp, Verbose, TEXT("[DWM Sheep]   not a sheep: '%s' mesh '%s'."),
+				*Actor->GetName(), *Asset->GetName());
+			continue;
+		}
+
+		// Report the state BEFORE changing it. Two sheep were reported set to graze and
+		// both still looked dead, so what the clip is competing with matters more than
+		// whether the clip was applied.
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DWM Sheep] '%s' at %s: physics=%s, visible=%s, hidden=%s, ")
+			TEXT("animMode=%d, currentAnim='%s'."),
+			*Actor->GetName(), *Actor->GetActorLocation().ToCompactString(),
+			Mesh->IsSimulatingPhysics() ? TEXT("SIMULATING") : TEXT("off"),
+			Mesh->IsVisible() ? TEXT("yes") : TEXT("no"),
+			Actor->IsHidden() ? TEXT("yes") : TEXT("no"),
+			(int32)Mesh->GetAnimationMode(),
+			*GetNameSafe(Mesh->AnimationData.AnimToPlay));
+
+		// A simulating skeletal mesh ignores its animation and settles into a heap,
+		// which is exactly what a dead sheep looks like.
+		if (Mesh->IsSimulatingPhysics())
+		{
+			Mesh->SetSimulatePhysics(false);
+		}
+
+		Mesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		Mesh->SetAnimation(Graze);
+		Mesh->Play(true);
+
+		const FVector Where = Actor->GetActorLocation();
+		const float Offset = FMath::Fmod(FMath::Abs(Where.X + Where.Y) / 97.0f, 1.0f);
+		Mesh->SetPosition(Offset * Graze->GetPlayLength(), false);
+
+		++Grazing;
+	}
+
+	if (Grazing > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[DWM Sheep] %d sheep set to graze."), Grazing);
+	}
+}
+
 FString GetDwmBootstrapIdentity(const AActor* Actor)
 {
 	FString Identity = Actor ? Actor->GetName() : FString();
@@ -34,6 +119,13 @@ struct FDwmDialogueProxySource
 	const TCHAR* ActorLabel;
 	AActor* SourceActor = nullptr;
 	ADwmNpcActor* ExistingNpc = nullptr;
+
+	/** Set once a TAGGED actor has claimed this source. Nothing outranks a tag: it is
+	    the only identifier here that survives cooking intact. Labels are editor-only
+	    and object names keep whatever the actor was created as, which is why DeShawn
+	    -- labelled 'DeShawn' but named something else entirely -- was found in PIE and
+	    not in the packaged build. */
+	bool bTagMatch = false;
 
 	/** Set once an actor labelled EXACTLY with ActorToken has claimed this source, so
 	    a later loose name match cannot displace it. */
@@ -192,10 +284,51 @@ void BootstrapDialogueProxyNpcs(
 			continue;
 		}
 
+		// A TAG WINS BEFORE ANY OTHER TEST, including the skeletal-mesh gate below.
+		// Tagging an actor says "this is the one"; the component check only guesses at
+		// what such an actor looks like, and it is the guess that rejected DeShawn.
+		{
+			bool bClaimed = false;
+			for (FDwmDialogueProxySource& Source : Sources)
+			{
+				if (Actor->ActorHasTag(FName(Source.ActorLabel)))
+				{
+					Source.SourceActor = Actor;
+					Source.bTagMatch = true;
+					bClaimed = true;
+					UE_LOG(LogTemp, Log, TEXT("[%s] '%s' is tagged '%s'; using it."),
+						LogPrefix, *GetNameSafe(Actor), Source.ActorLabel);
+					break;
+				}
+			}
+			if (bClaimed)
+			{
+				continue;
+			}
+		}
+
+		// EVERY actor this loop rejects, and why. The Suburbs bootstrap failed to find
+		// BP_DeShawn in a cooked build even though that name is in the level, so the
+		// reason it was skipped is not something to guess at a second time.
 		if (!Actor->FindComponentByClass<USkeletalMeshComponent>())
 		{
+			const FString RejectName = Actor->GetName();
+			for (const FDwmDialogueProxySource& Source : Sources)
+			{
+				if (RejectName.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("[%s]   SKIPPED '%s' (class '%s'): it matches '%s' but has no ")
+						TEXT("SkeletalMeshComponent."),
+						LogPrefix, *RejectName, *GetNameSafe(Actor->GetClass()),
+						Source.ActorToken);
+				}
+			}
 			continue;
 		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[%s]   candidate '%s' (class '%s')."),
+			LogPrefix, *Actor->GetName(), *GetNameSafe(Actor->GetClass()));
 
 		const FString Identity = GetDwmBootstrapIdentity(Actor);
 
@@ -215,6 +348,11 @@ void BootstrapDialogueProxyNpcs(
 
 		for (FDwmDialogueProxySource& Source : Sources)
 		{
+			if (Source.bTagMatch)
+			{
+				continue;
+			}
+
 			if (Label.Equals(Source.ActorToken, ESearchCase::IgnoreCase))
 			{
 				if (Source.SourceActor && Source.SourceActor != Actor)
@@ -229,7 +367,7 @@ void BootstrapDialogueProxyNpcs(
 				break;
 			}
 
-			if (!Source.SourceActor && !Source.bExactLabelMatch
+			if (!Source.SourceActor && !Source.bExactLabelMatch && !Source.bTagMatch
 				&& Identity.Contains(Source.ActorToken, ESearchCase::IgnoreCase))
 			{
 				Source.SourceActor = Actor;
@@ -290,9 +428,12 @@ void BootstrapDialogueProxyNpcs(
 		if (!Source.SourceActor)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[%s] Could not find a placed visual actor containing '%s' for %s."),
+				TEXT("[%s] Could not find a placed visual actor containing '%s' for %s. ")
+				TEXT("Tag the placed actor '%s' in the editor (Actor -> Tags); its label ")
+				TEXT("is not visible in a cooked build."),
 				LogPrefix,
 				Source.ActorToken,
+				Source.ActorLabel,
 				Source.ActorLabel);
 		}
 	}
@@ -465,6 +606,15 @@ void ADWM_DevGameMode::BeginPlay()
 	{
 		return;
 	}
+
+	// The flock reads as a field of dead sheep without this.
+	//
+	// They are plain SkeletalMeshActors placed with SK_Sheep and no animation asset at
+	// all -- nothing in the level references any ANIM_Sheep clip -- so they render in
+	// the skeleton's reference pose, which on a quadruped is a splayed, collapsed shape.
+	// Grazing is what they are meant to be doing, in the opening scene and again at the
+	// end, so it is set here rather than left to be re-applied by hand on each sheep.
+	SetMountainSheepGrazing(World);
 
 	ADwmNpcActor* HankNpc = nullptr;
 	AActor* LegacyHankActor = nullptr;

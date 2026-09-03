@@ -328,6 +328,16 @@ public:
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     FString SeatActorName;
 
+    /** Tag identifying the exact seat. PREFERRED over SeatActorName.
+
+        Tags are a UPROPERTY on AActor: they cook, they survive renaming, and they
+        say what a thing is FOR. Labels do neither -- GetActorLabel() is editor-only,
+        so a label pin silently stops matching in a packaged build -- and actor
+        NAMES are not stable across cooking either: StaticMeshActor_191 was the
+        ground-floor sofa in PIE and an upstairs one in the cooked build. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    FName SeatActorTag;
+
     /** Measure seat distance from THIS actor rather than from the NPC.
 
         "Nearest chair to me" is useless when the NPC itself is in the wrong place --
@@ -337,6 +347,11 @@ public:
         character happens to have been dropped. Matched by label, then by name. */
     UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
     FString SeatAnchorActorName;
+
+    /** Tag identifying the actor to measure seat distance from. PREFERRED over
+        SeatAnchorActorName, for the same reasons as SeatActorTag. */
+    UPROPERTY(EditAnywhere, Category = "DWM|NPC|Seated")
+    FName SeatAnchorTag;
 
     /** Substrings matched against nearby static mesh assets to find the furniture to sit
         on. Follows DwmValleyLifeDirector, which locates Maria's chair by "SM_RockingChair"
@@ -731,6 +746,9 @@ private:
     /** Single-node mode: plays the looping clip matching the current activity.
         Anim Blueprint mode: no-op, since the state machine owns this. */
     void RefreshLocomotionAnimation();
+
+    /** Re-apply the seated clip a tick after spawn, once the mesh exists. */
+    void ReapplySeatedPoseNextTick();
 
     /** Picks a random compatible idle for this NPC, so a group standing together does
         not all play the same motion. Returns nullptr when no alternative matches the

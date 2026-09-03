@@ -13,10 +13,14 @@
 ; limit.
 
 #define AppName        "Dream World Maker"
-#define AppVersion     "0.1"
+#define AppVersion     "0.2"
 #define AppPublisher   "TSP"
 #define AppExeName     "DWM_Dev.exe"
-#define BuildDir       "C:\DreamWorldMaker\Builds_Capped\Windows"
+; The archive BuildCookRun writes to. Builds_Capped was a one-off directory from
+; when the texture cap was applied by hand; the cap now lives in
+; DefaultDeviceProfiles.ini and applies to every cook, so the normal output is
+; already capped. Pointing here at a stale directory silently ships an old build.
+#define BuildDir       "C:\DreamWorldMaker\Builds\Windows"
 
 [Setup]
 AppName={#AppName}
@@ -52,7 +56,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 ; Everything the archive step produced, recursively.
-Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; EXCLUDE Saved. It holds crash dumps, minidumps and every debug log the build has
+; written -- none of which belongs in someone else's install, and all of which the
+; game rewrites while the installer is reading it. A log rotating mid-compile is
+; what aborted the 0.2 build with "the system cannot find the file specified".
+Source: "{#BuildDir}\*"; DestDir: "{app}"; Excludes: "*\Saved\*,*\Saved"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
