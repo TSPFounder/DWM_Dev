@@ -5,6 +5,8 @@
 #include "DWM_DevCharacter.h"
 #include "DwmInteractiveDoor.h"
 #include "EngineUtils.h"
+#include "DwmQuitMenuWidget.h"
+#include "Kismet/GameplayStatics.h"
 #include "DWM_DevCharacter.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "DwmNpcActor.h"
@@ -37,6 +39,16 @@ void ADWM_DevPlayerController::SetupInputComponent()
 		InputComponent->BindKey(EKeys::F, IE_Pressed, this,
 			&ADWM_DevPlayerController::InteractWithDoor).bConsumeInput = false;
 		InputComponent->BindKey(EKeys::T, IE_Pressed, this, &ADWM_DevPlayerController::InteractWithTerminalKey);
+
+		// bExecuteWhenPaused, or the menu it opens could never be dismissed: the game
+		// is paused behind it and a normal binding stops firing.
+		FInputKeyBinding& QuitBinding = InputComponent->BindKey(
+			EKeys::Escape, IE_Pressed, this, &ADWM_DevPlayerController::ToggleQuitMenu);
+		QuitBinding.bExecuteWhenPaused = true;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DWM QUIT] Escape bound on '%s' (class '%s')."),
+			*GetNameSafe(this), *GetNameSafe(GetClass()));
+		InputComponent->bBlockInput = false;
 	}
 }
 
@@ -240,6 +252,40 @@ void ADWM_DevPlayerController::EnableInputOnPackDoors()
 			TEXT("[DWM DOOR] Enabled input on %d door(s) that did not claim it themselves."),
 			Repaired);
 	}
+}
+
+void ADWM_DevPlayerController::ToggleQuitMenu()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[DWM QUIT] Escape pressed; menu %s."),
+		QuitMenu ? TEXT("open") : TEXT("closed"));
+
+	if (QuitMenu)
+	{
+		// Escape closes it too, so the key that opened it always gets you out.
+		QuitMenu->RemoveFromParent();
+		QuitMenu = nullptr;
+		UGameplayStatics::SetGamePaused(this, false);
+		SetInputMode(FInputModeGameOnly());
+		SetShowMouseCursor(false);
+		return;
+	}
+
+	QuitMenu = CreateWidget<UDwmQuitMenuWidget>(this, UDwmQuitMenuWidget::StaticClass());
+	if (!QuitMenu)
+	{
+		return;
+	}
+
+	QuitMenu->AddToViewport(1000);
+	UGameplayStatics::SetGamePaused(this, true);
+
+	// GameAndUI rather than UIOnly: the pause already stops the world, and UIOnly has
+	// a habit of swallowing the Escape that should close this again.
+	FInputModeGameAndUI Mode;
+	Mode.SetWidgetToFocus(QuitMenu->TakeWidget());
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(Mode);
+	SetShowMouseCursor(true);
 }
 
 void ADWM_DevPlayerController::InteractWithDoor()

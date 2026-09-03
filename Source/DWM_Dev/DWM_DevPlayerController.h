@@ -49,6 +49,16 @@ private:
 	void InteractWithTerminalKey();
 	void InteractWithDoor();
 
+	/** Escape opens a confirmation panel with Keep Playing / Quit to Desktop.
+	    A packaged build otherwise has no way out but Alt+F4, and Escape does nothing
+	    by default in a shipping game. Confirmed rather than immediate, because the
+	    key is easy to hit by accident and Hank's errand progress does not survive
+	    the process. */
+	void ToggleQuitMenu();
+
+	UPROPERTY(Transient)
+	class UDwmQuitMenuWidget* QuitMenu = nullptr;
+
 	/** Give asset-pack doors the input they failed to claim for themselves.
 
 	    Doors like AmericanCityPacks B_Door call Enable Input (Get Player Controller 0)
