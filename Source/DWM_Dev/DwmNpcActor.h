@@ -747,6 +747,9 @@ private:
         Anim Blueprint mode: no-op, since the state machine owns this. */
     void RefreshLocomotionAnimation();
 
+    /** Re-apply the seated clip a tick after spawn, once the mesh exists. */
+    void ReapplySeatedPoseNextTick();
+
     /** Picks a random compatible idle for this NPC, so a group standing together does
         not all play the same motion. Returns nullptr when no alternative matches the
         mesh's skeleton, in which case the configured IdleAnimation is kept. */

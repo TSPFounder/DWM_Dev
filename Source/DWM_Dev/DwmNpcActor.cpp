@@ -1675,6 +1675,7 @@ void ADwmNpcActor::BeginSeated()
         }
 
         EnterActivity(EDwmNpcActivity::Seated);
+        ReapplySeatedPoseNextTick();
         return;
     }
 
@@ -1689,6 +1690,30 @@ void ADwmNpcActor::BeginSeated()
     SetActorRotation(FRotator(0.0f, SeatRotation.Yaw - MeshFacingYawOffset, 0.0f));
 
     EnterActivity(EDwmNpcActivity::Seated);
+    ReapplySeatedPoseNextTick();
+}
+
+void ADwmNpcActor::ReapplySeatedPoseNextTick()
+{
+    // SET THE POSE AGAIN ONCE THE MESH IS ACTUALLY THERE.
+    //
+    // Seating runs from BeginPlay, and on a mesh COPY -- the Hillside pattern, where the
+    // NPC is built from a placed actor's mesh rather than driving a separate visual --
+    // the skeletal mesh is still being set up at that moment, so SetAnimation quietly
+    // does nothing and the character stands in its reference pose. The first refresh
+    // that took was the one inside BeginDialogue, which is why they snapped into place
+    // only when spoken to.
+    if (UWorld* W = GetWorld())
+    {
+        FTimerHandle Handle;
+        W->GetTimerManager().SetTimerForNextTick(
+            FTimerDelegate::CreateWeakLambda(this, [this]()
+            {
+                RefreshLocomotionAnimation();
+                UE_LOG(LogTemp, Log, TEXT("[DWM NPC] '%s' seated pose re-applied after spawn."),
+                    *GetNameSafe(this));
+            }));
+    }
 }
 
 bool ADwmNpcActor::ShouldStandForPlayer(const APawn* Player) const
@@ -2511,8 +2536,29 @@ EDwmDialogueState ADwmNpcActor::SelectStateForThisInteraction() const
                     break;
                 }
             }
+            FString Have;
+            for (const FString& P : Partners)
+            {
+                Have += (Have.IsEmpty() ? TEXT("") : TEXT(", ")) + P;
+            }
+            FString Missing;
+            for (const FString& Required : RequiredSellerCommunityIds)
+            {
+                if (!Partners.Contains(Required))
+                {
+                    Missing += (Missing.IsEmpty() ? TEXT("") : TEXT(", ")) + Required;
+                }
+            }
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM HANK] Partners since watermark: [%s]. Still needed: [%s]."),
+                Have.IsEmpty() ? TEXT("none") : *Have,
+                Missing.IsEmpty() ? TEXT("none") : *Missing);
+
             if (bAllComplete && RequiredSellerCommunityIds.Num() > 0)
             {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DWM HANK] All trades complete -- ReturnAllTradesComplete selected. ")
+                    TEXT("Finish this conversation to release the turbine."));
                 return EDwmDialogueState::ReturnAllTradesComplete;
             }
         }
@@ -2687,11 +2733,18 @@ void ADwmNpcActor::AdvanceDialogue()
         // never appear before the turbine has actually begun turning.
         if (IsHankProfile())
         {
+            // The one place the turbine is released and the closing line unlocked. If a
+            // playthrough reaches the end with a still rotor, either this never ran or
+            // the release returned false -- say which.
+            bool bReleased = false;
             if (UDwmGameInstance* GameInstance = GetGameInstance<UDwmGameInstance>())
             {
-                GameInstance->StartTurbineActThreePayoff();
+                bReleased = GameInstance->StartTurbineActThreePayoff();
             }
             UnlockFarewell();
+            UE_LOG(LogTemp, Warning,
+                TEXT("[DWM HANK] Act 3 payoff fired: turbine released=%s, farewell unlocked."),
+                bReleased ? TEXT("yes") : TEXT("NO"));
         }
     }
 
