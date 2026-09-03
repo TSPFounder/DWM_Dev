@@ -5,8 +5,8 @@
 #include "DWM_DevCharacter.h"
 #include "DwmInteractiveDoor.h"
 #include "EngineUtils.h"
+#include "DWM_DevCharacter.h"
 #include "Engine/BlueprintGeneratedClass.h"
-#include "Engine/InputKeyDelegateBinding.h"
 #include "DwmNpcActor.h"
 #include "DwmTradeTerminalActor.h"
 #include "Components/InputComponent.h"
@@ -199,22 +199,26 @@ void ADWM_DevPlayerController::EnableInputOnPackDoors()
 		// a key has an InputKey event, which UBlueprintGeneratedClass records as an
 		// input delegate binding -- so ask the class whether it binds input at all.
 		UBlueprintGeneratedClass* BlueprintClass = Cast<UBlueprintGeneratedClass>(Candidate->GetClass());
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DWM DOOR] candidate '%s' class '%s': blueprint=%s, bindings=%d, ")
+			TEXT("hasInput=%s."),
+			*Candidate->GetName(), *GetNameSafe(Candidate->GetClass()),
+			BlueprintClass ? TEXT("yes") : TEXT("no"),
+			BlueprintClass ? BlueprintClass->DynamicBindingObjects.Num() : -1,
+			Candidate->InputComponent ? TEXT("yes") : TEXT("no"));
+
+		// A BLUEPRINT DOOR IS ENOUGH; DO NOT REQUIRE A VISIBLE INPUT BINDING.
+		//
+		// DynamicBindingObjects reports 2 for B_Door in the editor and the cooked build
+		// repaired nothing, so that list is not dependable once cooked and requiring it
+		// silently disabled the whole repair. Being a Blueprint class is the
+		// discriminator that matters: the facade pieces to exclude are plain
+		// StaticMeshActors, which this cast rejects. Reading DynamicBindingObjects
+		// through that null cast is what crashed the packaged build on the Mountain's
+		// SM_CupbardDoor2 -- the City had one candidate and it was a Blueprint, so PIE
+		// never reached it.
 		if (!BlueprintClass)
-		{
-			continue;
-		}
-
-		bool bBindsInput = false;
-		for (const UDynamicBlueprintBinding* Binding : BlueprintClass->DynamicBindingObjects)
-		{
-			if (Cast<UInputKeyDelegateBinding>(Binding))
-			{
-				bBindsInput = true;
-				break;
-			}
-		}
-
-		if (!bBindsInput)
 		{
 			continue;
 		}
@@ -291,6 +295,16 @@ void ADWM_DevPlayerController::InteractWithDoor()
 			UE_LOG(LogTemp, Warning,
 				TEXT("[DWM DOOR]   No actor with 'Door' in its class name within 10 m."));
 		}
+	}
+
+	// ADWM_DevCharacter binds F itself and toggles the same door. While our binding
+	// consumed the key this never mattered; once it stopped consuming, both handlers
+	// ran, ToggleDoor fired twice, and the door opened and shut in one frame -- which
+	// looks exactly like a door that does not work. This binding exists only so an
+	// alternate pawn keeps door interaction, so stand down when the character is here.
+	if (Cast<ADWM_DevCharacter>(GetPawn()))
+	{
+		return;
 	}
 
 	if (ADwmInteractiveDoor* Door = ActiveDoor.Get())
