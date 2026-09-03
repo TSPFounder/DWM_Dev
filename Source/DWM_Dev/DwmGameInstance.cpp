@@ -3557,6 +3557,44 @@ void UDwmGameInstance::SpawnDemoTradeTerminal()
         return;
     }
 
+    // SELL WHAT THIS COMMUNITY ACTUALLY HAS.
+    //
+    // Every runtime terminal used the actor's defaults -- mountain buys grain from
+    // VALLEY -- whatever community it stood in. So trading at Hillside or the Suburbs
+    // recorded a valley trade, and the ledger bears that out: across days of play every
+    // row is valley or city and there is not one hillside or suburb trade in it.
+    //
+    // Hank needs all four before ReturnAllTradesComplete fires, and that is the single
+    // call site that starts the turbine and unlocks his closing line. Neither could ever
+    // happen. The intended fix was four hand-placed terminals; configuring the spawned
+    // one per map does the same job without depending on level authoring.
+    //
+    // Resources are each community's own surplus, so a trade cannot fail for want of
+    // stock. Hillside is the loose end: Hank asks it for CAD drawings and a simulation
+    // model, and no such resource exists in the ledger -- wool is a placeholder that
+    // trades correctly but does not match what he asks for.
+    if (MapString.Contains(TEXT("Hillside"), ESearchCase::IgnoreCase))
+    {
+        Terminal->SellerCommunityId = TEXT("hillside");
+        Terminal->ResourceId = TEXT("wool");
+    }
+    else if (MapString.Contains(TEXT("Suburb"), ESearchCase::IgnoreCase))
+    {
+        Terminal->SellerCommunityId = TEXT("suburb");
+        Terminal->ResourceId = TEXT("skilled_labor");
+    }
+    else if (MapString.Contains(TEXT("City"), ESearchCase::IgnoreCase))
+    {
+        Terminal->SellerCommunityId = TEXT("city");
+        Terminal->ResourceId = TEXT("manufactured_tools");
+    }
+    // Valley and the Mountain keep the defaults: valley IS the grain seller, and the
+    // Mountain's own terminal is the original Day 18 demo trade.
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[DWM Economy] Terminal on '%s' sells %s from '%s'."),
+        *MapString, *Terminal->ResourceId, *Terminal->SellerCommunityId);
+
     // Cube hidden, LABEL KEPT -- the same look as Kai's placed terminal, which shows
     // its small billboarded trade text and no grey box. #6 hid both here, which
     // left every other community with an invisible terminal and no way to know a
